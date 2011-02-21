@@ -70,6 +70,7 @@ static ResProperty* s_resproperty = NULL;
 static TpvProperty* s_tpvproperty = NULL;
 static TpvColorScale* s_volcolorscale = NULL;
 static TpvColorScale* s_isocolorscale = NULL;
+static float* s_isovalues = NULL;
 static VglCanvas* s_canvas = NULL;
 static VglCamera* s_camera = NULL;
 static VglManipHandler* s_handler = NULL;
@@ -499,7 +500,7 @@ static TpvProperty* CreateTpvPropertyFromTopModel(TopModel* topmodel, double* sc
   prop->SetIndirection(NULL);
 
   s_volcolorscale = TransferFunc(s_tfpath, scalarMin, scalarMax);
-  s_isocolorscale = TransferFunc(s_isopath, scalarMin, scalarMax);
+  s_isocolorscale = IsoValues(s_isopath, scalarMin, scalarMax, &s_isovalues);
 
   return prop;
 }
@@ -676,7 +677,7 @@ static TpvProperty* CreateTpvPropertyFromResProperty (TopMultiModel* multimodel,
   prop->SetIndirection(NULL);
 
   s_volcolorscale = TransferFunc(s_tfpath, resprop->GetMinValue(), resprop->GetMaxValue());
-  s_isocolorscale = TransferFunc(s_isopath, resprop->GetMinValue(), resprop->GetMaxValue());
+  s_isocolorscale = IsoValues(s_isopath, resprop->GetMinValue(), resprop->GetMaxValue(), &s_isovalues);
 
   return prop;
 }
@@ -846,7 +847,7 @@ int main(int argc, char **argv){
     s_resCudaRC->SetResGeometry(s_resGeometry);
     s_resCudaRC->SetModel(s_topmultimodel);
     s_resCudaRC->SetVolumetricColorScale(s_volcolorscale);
-    s_resCudaRC->SetIsoColorScale(s_isocolorscale);
+    s_resCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_resCudaRC->SetProperty(s_tpvproperty);
     s_resCudaRC->SetDebug(false);
     s_resCudaRC->SetExplodedView(false);
@@ -869,7 +870,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetGeometry(s_tpvFemTetraGeometry);
     s_femCudaRC->SetModel(s_topmodel);
     s_femCudaRC->SetVolumetricColorScale(s_volcolorscale);
-    s_femCudaRC->SetIsoColorScale(s_isocolorscale);
+    s_femCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_femCudaRC->SetProperty(s_tpvproperty);
     s_femCudaRC->SetDebug(false);
     s_femCudaRC->SetExplodedView(false);
@@ -893,7 +894,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetGeometry(s_tpvFemTetraGeometry);
     s_femCudaRC->SetModel(s_topmodel);
     s_femCudaRC->SetVolumetricColorScale(s_volcolorscale);
-    s_femCudaRC->SetIsoColorScale(s_isocolorscale);
+    s_femCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_femCudaRC->SetProperty(s_tpvproperty);
     s_femCudaRC->SetDebug(false);
     s_femCudaRC->SetExplodedView(false);
