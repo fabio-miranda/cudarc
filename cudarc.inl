@@ -62,6 +62,7 @@ CudaRC<MODELCLASS>::CudaRC(){
   m_resGeometry = NULL;
   m_volcolorscale = NULL;
   m_isocolorscale = NULL;
+  m_isovalues = NULL;
   m_explosionfactor = 1.0;
   m_tfsize = 1024;
   m_tessellation = 1;
@@ -234,22 +235,26 @@ void CudaRC<MODELCLASS>::Update(){
     BuildHexaInterpolFuncTexture(interpolFuncData);
 #else
     BuildTetraInterpolFuncTexture(interpolFuncData);
-	BuildTetraVertexGradientTextures( gradientVertexData, interpolFuncData );
+#ifdef CUDARC_GRADIENT_PERVERTEX
+	  BuildTetraVertexGradientTextures( gradientVertexData, interpolFuncData );
+#endif
 #endif
 
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       createGPUInterpolFuncTex(i, m_memoryInfo.sizeInterpolFuncTex, interpolFuncData[i]);
 
-	for(int i=0; i<m_memoryInfo.numFaces; i++)
-		createGPUGradientVertexTex(i, m_memoryInfo.sizeGradientVertexTex, gradientVertexData[i]);
-
-	for(int i=0; i<m_memoryInfo.numFaces; i++)
-      delete gradientVertexData[i];
-    delete [] gradientVertexData;
-
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       delete [] interpolFuncData[i];
     delete [] interpolFuncData;
+
+#ifdef CUDARC_GRADIENT_PERVERTEX
+    for(int i=0; i<m_memoryInfo.numFaces; i++)
+	    createGPUGradientVertexTex(i, m_memoryInfo.sizeGradientVertexTex, gradientVertexData[i]);
+
+    for(int i=0; i<m_memoryInfo.numFaces; i++)
+      delete gradientVertexData[i];
+    delete [] gradientVertexData;
+#endif
   }
 
   if(m_update_colorscale){
@@ -257,9 +262,21 @@ void CudaRC<MODELCLASS>::Update(){
     float* isocolorscaledata = new float[4 * m_memoryInfo.numValuesTf];
     float* volcontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
     float* isocontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
+
+    int volnumcp = m_volcolorscale->GetNumberOfValues();
+    int isonumcp = m_isocolorscale->GetNumberOfValues();
+    float* volcp = new float[volnumcp];
+    float* isocp = new float[isonumcp];
+
+    for(int i=0; i<volnumcp; i++)
+      volcp[i] = m_volcolorscale->GetValue(i);
+
+    for(int i=0; i<isonumcp; i++)
+      isocp[i] = m_isocolorscale->GetValue(i);
+
     BuildColorScaleTexture(volcolorscalesata, isocolorscaledata);
-    BuildControlPointsTexture(volcontronpointsdata, m_volcolorscale);
-    BuildControlPointsTexture(isocontronpointsdata, m_isocolorscale);
+    BuildControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
+    BuildControlPointsTexture(isocontronpointsdata, isonumcp, isocp, m_isocolorscale->GetValue(0), m_isocolorscale->GetValue(isonumcp-1));
     createGPUColorScaleTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcolorscalesata, isocolorscaledata);
     createGPUVolControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcontronpointsdata);
     createGPUIsoControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, isocontronpointsdata);
@@ -267,6 +284,8 @@ void CudaRC<MODELCLASS>::Update(){
     delete [] isocolorscaledata;
     delete [] volcontronpointsdata;
     delete [] isocontronpointsdata;
+    delete [] volcp;
+    delete [] isocp;
   }
 
   if(m_update_zetapsigamma){
@@ -869,6 +888,10 @@ float CudaRC<MODELCLASS>::determinant(const float entries[9])
 MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertexData, float** gradientData){
 
+#ifdef CUDARC_VERBOSE
+  printf("\nBuilding Tetra Vertex Gradient Textures... ");
+#endif
+
   TpvTetrahedronSet* set = m_tetraGeometry->GetTetrahedra();
   TpvIntArray *tetraIndex = set->GetVertexIncidences();
   TpvFloatArray* vertexPositions = set->GetVertexPositions();
@@ -978,6 +1001,10 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
       collisionData[ni][4 * (ti+1) + 3] = 1;
     }
   }*/
+
+#ifdef CUDARC_VERBOSE
+  printf("Done.\n");
+#endif
 }
 
 MODEL_CLASS_TEMPLATE
@@ -1228,26 +1255,23 @@ For position n:
 - n.w: previous control point (j-1)
 */
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, TpvColorScale* colorscale){
+void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax){
 #ifdef CUDARC_VERBOSE
   printf("\nBuilding Control Points Texture... ");
 #endif
 
-  int numCp = colorscale->GetNumberOfValues();
-  float s_min = colorscale->GetValue(0);
-  float s_max = colorscale->GetValue(numCp - 1);
-  float s_diff = s_max - s_min;
+  float sdiff = smax - smin;
 
   //First control point (cp) bigger than s
   int cpCounter = 0;
   for(int i=0; i< m_memoryInfo.numValuesTf; ){
-    float s = (float) (i) / (float) (m_memoryInfo.numValuesTf - 1);
-    float s_cp = (colorscale->GetValue(cpCounter) - s_min) / (s_diff);
+    float s = (float) (i) / (float) (m_memoryInfo.numValuesTf);
+    float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
 
-    if(cpCounter < numCp - 1){
+    if(cpCounter < numcp - 1){
       if(s <= s_cp){
         cpdata[4 * i] = s_cp;
-        cpdata[4 * i + 1] = (colorscale->GetValue(cpCounter + 1) - s_min) / (s_diff);
+        cpdata[4 * i + 1] = (cpvalues[cpCounter+1] - smin) / (sdiff);
         i++;
       }
       else{
@@ -1267,12 +1291,12 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, TpvColorScale*
   //First control point (cp) smaller than s
   for(int i=m_memoryInfo.numValuesTf - 1; i>= 0 ; ){
     float s = (float) (i+1) / (float) (m_memoryInfo.numValuesTf-1);
-    float s_cp = (colorscale->GetValue(cpCounter) - s_min) / (s_diff);
+    float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
 
     if(cpCounter > 0){
       if(s >= s_cp){
         cpdata[4 * i + 2] = s_cp;
-        cpdata[4 * i + 3] = (colorscale->GetValue(cpCounter - 1) - s_min) / (s_diff);
+        cpdata[4 * i + 3] = (cpvalues[cpCounter-1] - smin) / (sdiff);
         i--;
       }
       else{
@@ -1527,9 +1551,10 @@ void CudaRC<MODELCLASS>::SetVolumetricColorScale(TpvColorScale* colorScale){
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetIsoColorScale(TpvColorScale* colorScale){
+void CudaRC<MODELCLASS>::SetIsoColorScale(TpvColorScale* colorScale, float* isovalues){
 
   m_isocolorscale = colorScale;
+  m_isovalues = isovalues;
   m_update_colorscale = true;
 }
 

@@ -7,6 +7,7 @@
 #define CUDARC_VERBOSE
 #define CUDARC_TIME
 #define CUDARC_EXTRACT_TET_VERT_INCIDENCES true
+//#define CUDARC_GRADIENT_PERVERTEX //(tet. only!)
 //#define CUDARC_WHITE
 //#define CUDARC_HEX
 #define CUDARC_PLUCKER //(tet. only!)

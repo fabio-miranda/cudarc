@@ -9,8 +9,8 @@
 
 #define EPSILON 0
 
-//#include <GL/glut.h>
-#include <windows.h>
+#include <GL/glut.h>
+//#include <windows.h>
 
 #include <cuda_runtime_api.h>
 #include <cuda_gl_interop.h>
@@ -1502,19 +1502,23 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
           }
         }
       }
-
-	  	//Initialize barycentric interpolation
-	   float4 gradv0   = tex1Dfetch(texGrad0, threadRay->frontid);
-	   float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
-	   float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
-	   float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
-	   float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
       
       //Isosurface
       if(constMemory.isosurface > 0 && backid == threadRay->frontid && cpscalar == isocpscalar){
+
+#ifdef CUDARC_GRADIENT_PERVERTEX
+        //Initialize barycentric interpolation
+        float4 gradv0   = tex1Dfetch(texGrad0, threadRay->frontid);
+        float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
+        float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
+        float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
+        float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
+        float3 N = normalize(make_float3(gradient.x,gradient.y,gradient.z));
+#else
+        float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));
+#endif
+
         float4 color = tex1D(texIsoColorScale, tetraBackScalar);
-        //float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));
-		float3 N = normalize(make_float3(gradient.x,gradient.y,gradient.z));
         float3 L = normalize(make_float3(- threadRay->t * threadRay->dir));
         color.x *= abs(dot(N, L));
         color.y *= abs(dot(N, L));
@@ -1721,9 +1725,11 @@ extern "C" void createGPUAdjTex(int index, int size, float* data){
 #endif
 }
 
+
 /**
 * Create gradient vertex textures on the GPU
 */
+#ifdef CUDARC_GRADIENT_PERVERTEX
 extern "C" void createGPUGradientVertexTex(int ni, int size, float* data)
 {
   CUDA_SAFE_CALL(cudaMalloc((void**)&dev_gradientVertex[ni], size));
@@ -1752,6 +1758,7 @@ extern "C" void createGPUGradientVertexTex(int ni, int size, float* data)
 #endif
 
 }
+#endif
 
 /**
 * Create node textures on the GPU
