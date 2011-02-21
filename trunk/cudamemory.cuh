@@ -73,6 +73,7 @@ texture<float, 2, cudaReadModeElementType> texZetaPsiGamma;
 static float* dev_collision[4];
 static float* dev_adj[1];
 static float* dev_interpolfunc[1];
+static float* dev_gradientVertex[4];
 #ifdef CUDARC_PLUCKER
 texture<float4, 1, cudaReadModeElementType> texNode0;
 texture<float4, 1, cudaReadModeElementType> texNode1;
@@ -87,6 +88,11 @@ texture<float4, 1, cudaReadModeElementType> texFace3Eq;
 #endif
 #endif
 
+
+texture<float4, 1, cudaReadModeElementType> texGrad0;
+texture<float4, 1, cudaReadModeElementType> texGrad1;
+texture<float4, 1, cudaReadModeElementType> texGrad2;
+texture<float4, 1, cudaReadModeElementType> texGrad3;
 
 
 static float4* dev_outputData;

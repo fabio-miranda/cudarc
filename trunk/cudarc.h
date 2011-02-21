@@ -84,6 +84,7 @@ struct MemoryInfo{
   int sizeTf;
   int numValuesZetaPsiGamma;
   int sizeZetaPsiGamma;
+  int sizeGradientVertexTex;
 };
 
 
@@ -124,7 +125,7 @@ public:
   /**
   * Set iso color scale, for oil reservoir models or fem models
   */
-  void SetIsoColorScale(TpvColorScale* colorScale, float* isovalues);
+  void SetIsoColorScale(TpvColorScale* colorScale);
 
   /**
   * Set property, for oil reservoir models or fem models
@@ -218,6 +219,7 @@ private:
   * Build textures
   */
   void BuildHexaMeshTextures(float** nodesData, float** adjacenciesData);
+  void BuildTetraVertexGradientTextures(float** gradientVertexData, float** gradientData);
   void BuildTetraMeshTextures(float** nodesData, float** adjacenciesData);
   void BuildHexaInterpolFuncTexture(float** interpolfuncdata);
   void BuildHexaScalarTexture(float** scalarData);
@@ -225,8 +227,11 @@ private:
   void BuildTetraScalarTexture(float** scalarData);
   void BuildZetaPsiGammaTexture(float* psiGammaData);
   void BuildColorScaleTexture(float* volcolorscalesata, float* isocolorscaledata);
-  void BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax);
+  void BuildControlPointsTexture(float* cpdata, TpvColorScale* colorscale);
   void BuildAmbOcclusionTexture(float** ambocclusdata);
+
+  //Calculate determinant
+  float determinant(const float entries[9]);
 
   //ExplodedModel* m_explodedmodel;
 
@@ -238,7 +243,6 @@ private:
   TpvProperty* m_property;
   TpvColorScale* m_volcolorscale;
   TpvColorScale* m_isocolorscale;
-  float* m_isovalues;
 
   //Array with the display lists (one for each exploded part)
   GLuint* m_bdryDispList;

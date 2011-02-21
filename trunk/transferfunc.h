@@ -26,6 +26,6 @@
 * Ignores lines beggining with #
 */
 TpvColorScale* TransferFunc(const char* tffilepath, float scalarmin, float scalarmax);
-TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarmax, float** isovalues);
+//TpvColorScale* IsoValues(const char* isofilepath, int texsize, float scalarmin, float scalarmax);
 
 #endif

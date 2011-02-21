@@ -69,8 +69,8 @@ TpvColorScale* TransferFunc(const char* tffilepath, float scalarmin, float scala
   return colorscale;
 }
 
-
-TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarmax, float** isovalues){
+/*
+TpvColorScale* IsoValues(const char* isofilepath, int texsize, float scalarmin, float scalarmax){
 
   int numbpoints = 0;
   char line[256];
@@ -93,9 +93,13 @@ TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarm
 
   numbpoints = atoi(line);
   colorscale = new TpvColorScale();
-  *isovalues = new float[numbpoints];
   colorscale->SetInterpolationMode(TpvColorScale::INTERP_CONSTANT);
   colorscale->Reset(numbpoints);
+
+  float* aux = new float[4 * texsize];
+  memset(aux, 0, 4 * texsize * sizeof(float));
+  colorscale->SetColor(texsize, aux);
+  delete [] aux;
 
   for(int i=0; i<numbpoints; i++){
     float scalar;
@@ -105,7 +109,6 @@ TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarm
     //for(int j=-2; j<2; j++){
       colorscale->SetColor(i , color[0], color[1], color[2], color[3]);
     //}
-      (*isovalues)[i] = scalar;
   }
 
   fclose(fp);
@@ -117,3 +120,4 @@ TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarm
 
   return colorscale;
 }
+*/

@@ -47,6 +47,7 @@ extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p
 extern "C" void createGPUAdjTex(int index, int size, float* data);
 extern "C" void createGPUCollisionTex(int fi, int size, float* data);
 extern "C" void createGPUInterpolFuncTex(int index, int size, float* data);
+extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
 extern "C" void createGPUColorScaleTex(int numValues, int size, float* volcolorscaledata, float* isocolorscale);
 extern "C" void createGPUIsoControlPointsTex(int numValues, int size, float* data);
 extern "C" void createGPUVolControlPointsTex(int numValues, int size, float* data);
@@ -61,7 +62,6 @@ CudaRC<MODELCLASS>::CudaRC(){
   m_resGeometry = NULL;
   m_volcolorscale = NULL;
   m_isocolorscale = NULL;
-  m_isovalues = NULL;
   m_explosionfactor = 1.0;
   m_tfsize = 1024;
   m_tessellation = 1;
@@ -135,6 +135,7 @@ void CudaRC<MODELCLASS>::Update(){
     m_memoryInfo.sizeCollisionTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
     m_memoryInfo.sizeInterpolFuncTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
     m_memoryInfo.sizeAdjTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
+	m_memoryInfo.sizeGradientVertexTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
 
   }
 
@@ -223,40 +224,42 @@ void CudaRC<MODELCLASS>::Update(){
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       interpolFuncData[i] = new float[4 * (m_memoryInfo.numElem + 1)];
 
+	float** gradientVertexData = new float*[m_memoryInfo.numNodes];
+    
+	for(int i=0; i<m_memoryInfo.numNodes; i++){
+      gradientVertexData[i] = new float[4 * (m_memoryInfo.numElem + 1)];
+    }
+
 #ifdef CUDARC_HEX
     BuildHexaInterpolFuncTexture(interpolFuncData);
 #else
     BuildTetraInterpolFuncTexture(interpolFuncData);
+	BuildTetraVertexGradientTextures( gradientVertexData, interpolFuncData );
 #endif
 
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       createGPUInterpolFuncTex(i, m_memoryInfo.sizeInterpolFuncTex, interpolFuncData[i]);
 
+	for(int i=0; i<m_memoryInfo.numFaces; i++)
+		createGPUGradientVertexTex(i, m_memoryInfo.sizeGradientVertexTex, gradientVertexData[i]);
+
+	for(int i=0; i<m_memoryInfo.numFaces; i++)
+      delete gradientVertexData[i];
+    delete [] gradientVertexData;
+
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       delete [] interpolFuncData[i];
     delete [] interpolFuncData;
   }
- 
+
   if(m_update_colorscale){
     float* volcolorscalesata = new float[4 * m_memoryInfo.numValuesTf];
     float* isocolorscaledata = new float[4 * m_memoryInfo.numValuesTf];
     float* volcontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
     float* isocontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
-
-    int volnumcp = m_volcolorscale->GetNumberOfValues();
-    int isonumcp = m_volcolorscale->GetNumberOfValues();
-    float* volcp = new float[volnumcp];
-    float* isocp = new float[isonumcp];
-
-    for(int i=0; i<volnumcp; i++)
-      volcp[i] = m_volcolorscale->GetValue(i);
-
-    for(int i=0; i<isonumcp; i++)
-      isocp[i] = m_isocolorscale->GetValue(i);
-
     BuildColorScaleTexture(volcolorscalesata, isocolorscaledata);
-    BuildControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
-    BuildControlPointsTexture(isocontronpointsdata, isonumcp, isocp, m_isocolorscale->GetValue(0), m_isocolorscale->GetValue(isonumcp-1));
+    BuildControlPointsTexture(volcontronpointsdata, m_volcolorscale);
+    BuildControlPointsTexture(isocontronpointsdata, m_isocolorscale);
     createGPUColorScaleTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcolorscalesata, isocolorscaledata);
     createGPUVolControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcontronpointsdata);
     createGPUIsoControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, isocontronpointsdata);
@@ -264,8 +267,6 @@ void CudaRC<MODELCLASS>::Update(){
     delete [] isocolorscaledata;
     delete [] volcontronpointsdata;
     delete [] isocontronpointsdata;
-    delete [] volcp;
-    delete [] isocp;
   }
 
   if(m_update_zetapsigamma){
@@ -858,6 +859,128 @@ void CudaRC<MODELCLASS>::BuildHexaMeshTextures(float** collisionData, float** ad
 }
 
 MODEL_CLASS_TEMPLATE
+float CudaRC<MODELCLASS>::determinant(const float entries[9])
+{
+	return 	(-entries[6]*entries[4]*entries[2] - entries[7]*entries[5]*entries[0] - entries[8]*entries[3]*entries[1]
+	+ entries[0]*entries[4]*entries[8] + entries[1]*entries[5]*entries[6] + entries[2]*entries[3]*entries[7]);
+}
+
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertexData, float** gradientData){
+
+  TpvTetrahedronSet* set = m_tetraGeometry->GetTetrahedra();
+  TpvIntArray *tetraIndex = set->GetVertexIncidences();
+  TpvFloatArray* vertexPositions = set->GetVertexPositions();
+
+  int aux = - INT_MAX;
+  for( int i = 0; i < tetraIndex->Size(); i++ )
+  {
+	if( aux < (*tetraIndex)[i] )
+		aux = (*tetraIndex)[i];
+  }
+  int nVertex = aux;
+  std::vector<float> vertexGradientAux;
+  vertexGradientAux.resize(4*nVertex);
+
+  float fator = 1.0/6.0;
+  std::vector<float> gradientVolAcummulation;
+  gradientVolAcummulation.resize(nVertex);
+
+  for( int i = 0 ; i < m_memoryInfo.numElem; i++ ){
+		//Quarto vertices do tetraedro
+		int idV1 = (*tetraIndex)[4*i] - 1;
+		int idV2 = (*tetraIndex)[4*i+1] - 1;
+		int idV3 = (*tetraIndex)[4*i+2] - 1;
+		int idV4 = (*tetraIndex)[4*i+3] - 1;
+
+			//vertices do primeiro tetraedro
+		//VECTOR3D v1((*tet_vextex_positions)[3*idVertex1],(*tet_vextex_positions)[3*idVertex1+1],(*tet_vextex_positions)[3*idVertex1+2]);
+		//VECTOR3D v2((*tet_vextex_positions)[3*idVertex2],(*tet_vextex_positions)[3*idVertex2+1],(*tet_vextex_positions)[3*idVertex2+2]);
+		//VECTOR3D v3((*tet_vextex_positions)[3*idVertex3],(*tet_vextex_positions)[3*idVertex3+1],(*tet_vextex_positions)[3*idVertex3+2]);
+		//VECTOR3D v4((*tet_vextex_positions)[3*idVertex4],(*tet_vextex_positions)[3*idVertex4+1],(*tet_vextex_positions)[3*idVertex4+2]);
+
+		AlgVector v1((*vertexPositions)[3*idV1],(*vertexPositions)[3*idV1+1],(*vertexPositions)[3*idV1+2]);
+		AlgVector v2((*vertexPositions)[3*idV2],(*vertexPositions)[3*idV2+1],(*vertexPositions)[3*idV2+2]);
+		AlgVector v3((*vertexPositions)[3*idV3],(*vertexPositions)[3*idV3+1],(*vertexPositions)[3*idV3+2]);
+		AlgVector v4((*vertexPositions)[3*idV4],(*vertexPositions)[3*idV4+1],(*vertexPositions)[3*idV4+2]);
+
+		AlgVector u = v1 - v4;
+		AlgVector v = v2 - v4;
+		AlgVector w = v3 - v4;
+
+		float entries[9] = {u.x, u.y, u.z, v.x, v.y, v.z, w.x, w.y, w.z};
+
+		float volume = abs(fator*determinant( entries ));
+		//float volume = fator*abs(produtoMisto.determinant());
+
+
+
+		vertexGradientAux[4*idV1] += gradientData[0][4*(i+1)]*volume;
+		vertexGradientAux[4*idV1+1] += gradientData[0][4*(i+1)+1]*volume;
+		vertexGradientAux[4*idV1+2] += gradientData[0][4*(i+1)+2]*volume;
+		vertexGradientAux[4*idV1+3] += gradientData[0][4*(i+1)+3]*volume;
+
+		vertexGradientAux[4*idV2] += gradientData[0][4*(i+1)]*volume;
+		vertexGradientAux[4*idV2+1] += gradientData[0][4*(i+1)+1]*volume;
+		vertexGradientAux[4*idV2+2] += gradientData[0][4*(i+1)+2]*volume;
+		vertexGradientAux[4*idV2+3] += gradientData[0][4*(i+1)+3]*volume;
+
+		vertexGradientAux[4*idV3] += gradientData[0][4*(i+1)]*volume;
+		vertexGradientAux[4*idV3+1] += gradientData[0][4*(i+1)+1]*volume;
+		vertexGradientAux[4*idV3+2] += gradientData[0][4*(i+1)+2]*volume;
+		vertexGradientAux[4*idV3+3] += gradientData[0][4*(i+1)+3]*volume;
+
+		vertexGradientAux[4*idV4] += gradientData[0][4*(i+1)]*volume;
+		vertexGradientAux[4*idV4+1] += gradientData[0][4*(i+1)+1]*volume;
+		vertexGradientAux[4*idV4+2] += gradientData[0][4*(i+1)+2]*volume;
+		vertexGradientAux[4*idV4+3] += gradientData[0][4*(i+1)+3]*volume;
+
+		gradientVolAcummulation[idV1]+=volume;
+		gradientVolAcummulation[idV2]+=volume;
+		gradientVolAcummulation[idV3]+=volume;
+		gradientVolAcummulation[idV4]+=volume;
+  }
+
+  	for(int i = 0; i < nVertex; i++ )
+	{
+		vertexGradientAux[4*i] /= gradientVolAcummulation[i];
+		vertexGradientAux[4*i+1] /= gradientVolAcummulation[i];
+		vertexGradientAux[4*i+2] /= gradientVolAcummulation[i];
+		vertexGradientAux[4*i+3] /= gradientVolAcummulation[i];
+	}
+
+
+  for( int i = 0 ; i < m_memoryInfo.numElem; i++ ){
+		//Quarto vertices do tetraedro
+	    int id[4];
+		id[0] = (*tetraIndex)[4*i] - 1;
+		id[1] = (*tetraIndex)[4*i+1] - 1;
+		id[2] = (*tetraIndex)[4*i+2] - 1;
+		id[3] = (*tetraIndex)[4*i+3] - 1;
+		
+		for(int j = 0; j < 4; j++ ){
+			gradientVertexData[j][4 * (i+1) + 0] = vertexGradientAux[4*id[j] + 0];
+			gradientVertexData[j][4 * (i+1) + 1] = vertexGradientAux[4*id[j] + 1];
+			gradientVertexData[j][4 * (i+1) + 2] = vertexGradientAux[4*id[j] + 2];
+			gradientVertexData[j][4 * (i+1) + 3] = vertexGradientAux[4*id[j] + 3];
+		}
+  }
+
+
+
+  /*for(int ti=0; ti<m_memoryInfo.numElem; ti++){
+    for(int ni=0; ni<4; ni++){
+      float* pos = set->GetPosition(ti, ni);
+      collisionData[ni][4 * (ti+1) + 0] = pos[0];
+      collisionData[ni][4 * (ti+1) + 1] = pos[1];
+      collisionData[ni][4 * (ti+1) + 2] = pos[2];
+      collisionData[ni][4 * (ti+1) + 3] = 1;
+    }
+  }*/
+}
+
+MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** adjacenciesData){
 #ifdef CUDARC_VERBOSE
   printf("\nBuilding Mesh Textures... ");
@@ -1105,23 +1228,26 @@ For position n:
 - n.w: previous control point (j-1)
 */
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax){
+void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, TpvColorScale* colorscale){
 #ifdef CUDARC_VERBOSE
   printf("\nBuilding Control Points Texture... ");
 #endif
 
-  float sdiff = smax - smin;
+  int numCp = colorscale->GetNumberOfValues();
+  float s_min = colorscale->GetValue(0);
+  float s_max = colorscale->GetValue(numCp - 1);
+  float s_diff = s_max - s_min;
 
   //First control point (cp) bigger than s
   int cpCounter = 0;
   for(int i=0; i< m_memoryInfo.numValuesTf; ){
-    float s = (float) (i) / (float) (m_memoryInfo.numValuesTf);
-    float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
+    float s = (float) (i) / (float) (m_memoryInfo.numValuesTf - 1);
+    float s_cp = (colorscale->GetValue(cpCounter) - s_min) / (s_diff);
 
-    if(cpCounter < numcp - 1){
+    if(cpCounter < numCp - 1){
       if(s <= s_cp){
         cpdata[4 * i] = s_cp;
-        cpdata[4 * i + 1] = (cpvalues[cpCounter+1] - smin) / (sdiff);
+        cpdata[4 * i + 1] = (colorscale->GetValue(cpCounter + 1) - s_min) / (s_diff);
         i++;
       }
       else{
@@ -1141,12 +1267,12 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
   //First control point (cp) smaller than s
   for(int i=m_memoryInfo.numValuesTf - 1; i>= 0 ; ){
     float s = (float) (i+1) / (float) (m_memoryInfo.numValuesTf-1);
-    float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
+    float s_cp = (colorscale->GetValue(cpCounter) - s_min) / (s_diff);
 
     if(cpCounter > 0){
       if(s >= s_cp){
         cpdata[4 * i + 2] = s_cp;
-        cpdata[4 * i + 3] = (cpvalues[cpCounter-1] - smin) / (sdiff);
+        cpdata[4 * i + 3] = (colorscale->GetValue(cpCounter - 1) - s_min) / (s_diff);
         i--;
       }
       else{
@@ -1401,10 +1527,9 @@ void CudaRC<MODELCLASS>::SetVolumetricColorScale(TpvColorScale* colorScale){
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetIsoColorScale(TpvColorScale* colorScale, float* isovalues){
+void CudaRC<MODELCLASS>::SetIsoColorScale(TpvColorScale* colorScale){
 
   m_isocolorscale = colorScale;
-  m_isovalues = isovalues;
   m_update_colorscale = true;
 }
 
