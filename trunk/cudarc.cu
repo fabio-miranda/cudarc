@@ -1,5 +1,5 @@
 /**
-* Fabio Markus Miranda
+* Fabio Markus Mirand
 * fmiranda@tecgraf.puc-rio.br
 * fabiom@gmail.com
 * Dec 2010
