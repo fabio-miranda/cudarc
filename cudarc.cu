@@ -1,5 +1,5 @@
 /**
-* Fabio Markus Mirand
+* Fabio Markus Miranda
 * fmiranda@tecgraf.puc-rio.br
 * fabiom@gmail.com
 * Dec 2010
@@ -9,7 +9,8 @@
 
 #define EPSILON 0
 
-#include <GL/glut.h>
+//#include <GL/glut.h>
+#include <windows.h>
 
 #include <cuda_runtime_api.h>
 #include <cuda_gl_interop.h>
@@ -1501,11 +1502,19 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
           }
         }
       }
+
+	  	//Initialize barycentric interpolation
+	   float4 gradv0   = tex1Dfetch(texGrad0, threadRay->frontid);
+	   float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
+	   float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
+	   float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
+	   float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
       
       //Isosurface
       if(constMemory.isosurface > 0 && backid == threadRay->frontid && cpscalar == isocpscalar){
         float4 color = tex1D(texIsoColorScale, tetraBackScalar);
-        float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));
+        //float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));
+		float3 N = normalize(make_float3(gradient.x,gradient.y,gradient.z));
         float3 L = normalize(make_float3(- threadRay->t * threadRay->dir));
         color.x *= abs(dot(N, L));
         color.y *= abs(dot(N, L));
@@ -1710,6 +1719,38 @@ extern "C" void createGPUAdjTex(int index, int size, float* data){
 #ifdef CUDARC_VERBOSE
   printf("Adj. to CUDA: %s\n", cudaGetErrorString(cudaGetLastError()));
 #endif
+}
+
+/**
+* Create gradient vertex textures on the GPU
+*/
+extern "C" void createGPUGradientVertexTex(int ni, int size, float* data)
+{
+  CUDA_SAFE_CALL(cudaMalloc((void**)&dev_gradientVertex[ni], size));
+  CUDA_SAFE_CALL(cudaMemcpy(dev_gradientVertex[ni], data, size, cudaMemcpyHostToDevice));
+
+  switch(ni)
+  {
+  case 0:
+    CUDA_SAFE_CALL(cudaBindTexture(0, texGrad0, dev_gradientVertex[ni], size));
+    break;
+  case 1:
+    CUDA_SAFE_CALL(cudaBindTexture(0, texGrad1, dev_gradientVertex[ni], size));
+    break;
+  case 2:
+    CUDA_SAFE_CALL(cudaBindTexture(0, texGrad2, dev_gradientVertex[ni], size));
+    break;
+  case 3:
+    CUDA_SAFE_CALL(cudaBindTexture(0, texGrad3, dev_gradientVertex[ni], size));
+    break;
+  default:
+    break;
+  }
+
+#ifdef CUDARC_VERBOSE
+  printf("Gradient vertex to CUDA: %s\n", cudaGetErrorString(cudaGetLastError()));
+#endif
+
 }
 
 /**

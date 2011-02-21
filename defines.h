@@ -6,10 +6,10 @@
 //#define CUDARC_HARC
 #define CUDARC_VERBOSE
 #define CUDARC_TIME
-#define CUDARC_EXTRACT_TET_VERT_INCIDENCES false
+#define CUDARC_EXTRACT_TET_VERT_INCIDENCES true
 //#define CUDARC_WHITE
 //#define CUDARC_HEX
-//#define CUDARC_PLUCKER //(tet. only!)
+#define CUDARC_PLUCKER //(tet. only!)
 //#define CUDARC_BILINEAR //(hex. only!)
 
 
