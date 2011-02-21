@@ -125,7 +125,7 @@ public:
   /**
   * Set iso color scale, for oil reservoir models or fem models
   */
-  void SetIsoColorScale(TpvColorScale* colorScale);
+  void SetIsoColorScale(TpvColorScale* colorScale, float* isovalues);
 
   /**
   * Set property, for oil reservoir models or fem models
@@ -227,7 +227,7 @@ private:
   void BuildTetraScalarTexture(float** scalarData);
   void BuildZetaPsiGammaTexture(float* psiGammaData);
   void BuildColorScaleTexture(float* volcolorscalesata, float* isocolorscaledata);
-  void BuildControlPointsTexture(float* cpdata, TpvColorScale* colorscale);
+  void BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax);
   void BuildAmbOcclusionTexture(float** ambocclusdata);
 
   //Calculate determinant
@@ -243,6 +243,7 @@ private:
   TpvProperty* m_property;
   TpvColorScale* m_volcolorscale;
   TpvColorScale* m_isocolorscale;
+  float* m_isovalues;
 
   //Array with the display lists (one for each exploded part)
   GLuint* m_bdryDispList;
