@@ -1,0 +1,1 @@
+enum InterpolType {Const = 0, Linear = 1, Quad = 2};
