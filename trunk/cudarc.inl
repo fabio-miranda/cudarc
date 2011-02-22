@@ -276,7 +276,7 @@ void CudaRC<MODELCLASS>::Update(){
 
     BuildColorScaleTexture(volcolorscalesata, isocolorscaledata);
     BuildControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
-    BuildControlPointsTexture(isocontronpointsdata, isonumcp, isocp, m_isocolorscale->GetValue(0), m_isocolorscale->GetValue(isonumcp-1));
+    BuildControlPointsTexture(isocontronpointsdata, isonumcp-1, m_isovalues, m_isocolorscale->GetValue(0), m_isocolorscale->GetValue(isonumcp-1));
     createGPUColorScaleTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcolorscalesata, isocolorscaledata);
     createGPUVolControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcontronpointsdata);
     createGPUIsoControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, isocontronpointsdata);
@@ -1290,7 +1290,7 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
 
   //First control point (cp) smaller than s
   for(int i=m_memoryInfo.numValuesTf - 1; i>= 0 ; ){
-    float s = (float) (i+1) / (float) (m_memoryInfo.numValuesTf-1);
+    float s = (float) (i+1.0f) / (float) (m_memoryInfo.numValuesTf-1.0f);
     float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
 
     if(cpCounter > 0){
