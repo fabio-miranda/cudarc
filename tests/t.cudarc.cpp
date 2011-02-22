@@ -57,7 +57,7 @@
 #include <topsview/geometry/quadset.h>
 #include <ugl/uglim.h>
 
-#include <cudarc/cudarc.h>
+#include <cudarc.h>
 #include "defines.h"
 #include "transferfunc.h"
 
