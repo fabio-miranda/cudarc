@@ -70,6 +70,8 @@ static ResProperty* s_resproperty = NULL;
 static TpvProperty* s_tpvproperty = NULL;
 static TpvColorScale* s_volcolorscale = NULL;
 static TpvColorScale* s_isocolorscale = NULL;
+static float s_scalarmin = 1.0f;
+static float s_scalarmax = 0.0f;
 static float* s_isovalues = NULL;
 static VglCanvas* s_canvas = NULL;
 static VglCamera* s_camera = NULL;
@@ -372,6 +374,20 @@ static void keyboard(int k, int st, float x, float y, void *data){
     if(currentGeoType == Res)
       s_resCudaRC->SetVolumetric(s_volumetric);
     break;
+
+  case 'r':
+    s_volcolorscale = TransferFunc(s_tfpath, s_scalarmin, s_scalarmax);
+    s_isocolorscale = IsoValues(s_isopath, s_scalarmin, s_scalarmax, &s_isovalues);
+    
+    if(currentGeoType == Fem){
+      s_femCudaRC->SetVolumetricColorScale(s_volcolorscale);
+      s_femCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
+    }
+    if(currentGeoType == Res){
+      s_resCudaRC->SetVolumetricColorScale(s_volcolorscale);
+      s_resCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
+    }
+    break;
   
   case '0':
     printf("Interpol type: const\n");
@@ -484,23 +500,23 @@ static TpvProperty* CreateTpvPropertyFromTopModel(TopModel* topmodel, double* sc
   int numNodes = topmodel->GetNNodes();
   float* floatScalars = new float[numNodes];
 
-  float scalarMin = FLT_MAX, scalarMax = -FLT_MAX;  
+  s_scalarmin = FLT_MAX; s_scalarmax = -FLT_MAX;  
   for (int i = 0; i < numNodes; i++) {
     float s = scalars[i];
-    scalarMin = s < scalarMin ? s : scalarMin;
-    scalarMax = s > scalarMax ? s : scalarMax;
+    s_scalarmin = s < s_scalarmin ? s : s_scalarmin;
+    s_scalarmax = s > s_scalarmax ? s : s_scalarmax;
     floatScalars[i] = s;
   }
   bool takeownership;
   TpvProperty* prop = new TpvProperty(TpvProperty::PROP_NODE, 1);
   prop->SetBaseGlobalId(baseId);
   prop->SetValues(numNodes, floatScalars, takeownership=true);
-  prop->SetMinValue(&scalarMin);
-  prop->SetMaxValue(&scalarMax);
+  prop->SetMinValue(&s_scalarmin);
+  prop->SetMaxValue(&s_scalarmax);
   prop->SetIndirection(NULL);
 
-  s_volcolorscale = TransferFunc(s_tfpath, scalarMin, scalarMax);
-  s_isocolorscale = IsoValues(s_isopath, scalarMin, scalarMax, &s_isovalues);
+  s_volcolorscale = TransferFunc(s_tfpath, s_scalarmin, s_scalarmax);
+  s_isocolorscale = IsoValues(s_isopath, s_scalarmin, s_scalarmax, &s_isovalues);
 
   return prop;
 }
@@ -657,14 +673,14 @@ void InitTopModel(const char* fullPath, const char* propfile){
 static TpvProperty* CreateTpvPropertyFromResProperty (TopMultiModel* multimodel, ResProperty* resprop)
 {
   float* node_prop = resprop->CreateSmoothProperty(resprop->GetCurrentStep());
-  float smin = FLT_MAX, smax = -FLT_MAX;
+  s_scalarmin = FLT_MAX; s_scalarmax = -FLT_MAX;
   int numnodes = multimodel->GetTotalNNodes();
   int aux = 0;
   for (int i = 0; i < numnodes; i++) {
     if (node_prop[i] != resprop->GetNull()) {
       float s = node_prop[i];
-      smin = s < smin ? s : smin;
-      smax = s > smax ? s : smax;
+      s_scalarmin = s < s_scalarmin ? s : s_scalarmin;
+      s_scalarmax = s > s_scalarmax ? s : s_scalarmax;
       aux++;
     }
   }
@@ -672,12 +688,12 @@ static TpvProperty* CreateTpvPropertyFromResProperty (TopMultiModel* multimodel,
   TpvProperty* prop = new TpvProperty(TpvProperty::PROP_NODE, 1);
   prop->SetBaseGlobalId(0);
   prop->SetValues(numnodes, node_prop, takeownership=true);
-  prop->SetMinValue(&smin);
-  prop->SetMaxValue(&smax);
+  prop->SetMinValue(&s_scalarmin);
+  prop->SetMaxValue(&s_scalarmax);
   prop->SetIndirection(NULL);
 
-  s_volcolorscale = TransferFunc(s_tfpath, resprop->GetMinValue(), resprop->GetMaxValue());
-  s_isocolorscale = IsoValues(s_isopath, resprop->GetMinValue(), resprop->GetMaxValue(), &s_isovalues);
+  s_volcolorscale = TransferFunc(s_tfpath, s_scalarmin, s_scalarmax);
+  s_isocolorscale = IsoValues(s_isopath,s_scalarmin, s_scalarmax, &s_isovalues);
 
   return prop;
 }
