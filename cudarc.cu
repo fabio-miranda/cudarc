@@ -9,8 +9,11 @@
 
 #define EPSILON 0
 
-#include <GL/glut.h>
-//#include <windows.h>
+#ifndef CUDARC_WINGL
+	#include <windows.h>
+#else
+	#include <GL/glut.h>
+#endif
 
 #include <cuda_runtime_api.h>
 #include <cuda_gl_interop.h>

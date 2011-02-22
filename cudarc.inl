@@ -47,7 +47,9 @@ extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p
 extern "C" void createGPUAdjTex(int index, int size, float* data);
 extern "C" void createGPUCollisionTex(int fi, int size, float* data);
 extern "C" void createGPUInterpolFuncTex(int index, int size, float* data);
-extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
+#ifdef CUDARC_GRADIENT_PERVERTEX
+	extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
+#endif 
 extern "C" void createGPUColorScaleTex(int numValues, int size, float* volcolorscaledata, float* isocolorscale);
 extern "C" void createGPUIsoControlPointsTex(int numValues, int size, float* data);
 extern "C" void createGPUVolControlPointsTex(int numValues, int size, float* data);
