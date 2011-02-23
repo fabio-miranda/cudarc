@@ -145,9 +145,12 @@ public:
   */
   void SetMaxEdgeLengthEnabled(bool enabled); 
 
-  void SetDebug(bool flag);
-  void SetIsoSurface(bool flag);
-  void SetVolumetric(bool flag);
+  void SetDebugEnabled(bool flag);
+  void SetIsoSurfaceEnabled(bool flag);
+  void SetVolumetricEnabled(bool flag);
+  void SetProbeBoxEnabled(bool flag);
+  void SetNormalizedField(bool flag);
+  void SetProbeBox(float xmin, float xmax, float ymin, float ymax, float zmin, float zmax);
   void SetExplodedView(bool flag);
   void SetBlockSize(int sizex, int sizey);
   void SetWindowSize(int sizex, int sizey);
@@ -268,6 +271,10 @@ private:
   bool m_isosurface;
   bool m_volumetric;
   bool m_explodedview;
+  bool m_probeboxenabled;
+  bool m_normalizedfield;
+  AlgVector m_probeboxmin;
+  AlgVector m_probeboxmax;
   int m_interpoltype;
   int m_numsteps;
   int m_numtraverses;

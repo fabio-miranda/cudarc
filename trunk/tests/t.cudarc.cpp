@@ -7,7 +7,7 @@
 * t.cudarc.cpp: simple renderer that creates the CudaRC object and handles user interaction
 *
 * 
-* usage: %s modelpath [-propname] [-shaderpath] [-blocksize] [-maxpeel] [-tfpath] [-tfsize] [-winx] [-winy] [-scalez] [-transp] [-outputpath] [-benchmark] [-maxedge] [-interpol] [-tessellation]
+* usage: %s modelpath [-propname] [-normalizefield] [-shaderpath] [-blocksize] [-maxpeel] [-tfpath] [-tfsize] [-winx] [-winy] [-scalez] [-transp] [-outputpath] [-benchmark] [-maxedge] [-interpol] [-tessellation]
 * default values:
 * modelpath: (non-optional)
 * shaderpath: ../../../src/cudarc/glsl/
@@ -21,6 +21,7 @@
 * winy: 512
 * scalez: 10
 * maxedge: 1
+* normalizefield: 1
 * interpol: const, linear, trilinear, quad, step (default: step)
 * numsteps: 10 (only valid if interpol is step)
 * transp: 1
@@ -105,11 +106,13 @@ static float s_scalez = 1.0f;
 static bool s_transp = true;
 static bool s_bdryonly = false;
 static bool s_debug = false;
+static bool s_probebox = false;
 static bool s_displaytime = false;
 static bool s_benchmark = false;
 static bool s_maxedge = true;
 static bool s_isosurface = false;
 static bool s_volumetric = true;
+static bool s_normalizefield = true;
 static int s_averageframes = 1;
 static int s_tfsize = 1024;
 static int s_zetapsigammasize = 512;
@@ -339,16 +342,32 @@ static void keyboard(int k, int st, float x, float y, void *data){
   case 'b':
     Benchmark();
     break;
+
+  
+
 #ifndef CUDARC_HARC
+  case 'c':
+    s_probebox = !s_probebox;
+    printf("Probebox: %d\n", s_probebox);
+    if(currentGeoType == Fem){
+      s_femCudaRC->SetProbeBoxEnabled(s_probebox);
+      s_femCudaRC->SetProbeBox(0.3, 0.7, 0.3, 0.7, 0.3, 0.7);
+    }
+    if(currentGeoType == Res){
+      s_resCudaRC->SetProbeBoxEnabled(s_probebox);
+      s_resCudaRC->SetProbeBox(0.3, 0.7, 0.3, 0.7, 0.3, 0.7);
+    }
+    break;
+
   case 'd':
     s_debug = !s_debug;
     printf("Debug: %d\n", s_debug);
     if(currentGeoType == Fem)
-      s_femCudaRC->SetDebug(s_debug);
+      s_femCudaRC->SetDebugEnabled(s_debug);
     if(currentGeoType == Res)
-      s_resCudaRC->SetDebug(s_debug);
+      s_resCudaRC->SetDebugEnabled(s_debug);
     break;
-  case 'n':
+  case 'm':
     s_maxedge = !s_maxedge;
     printf("Max edge length: %d\n", s_maxedge);
     if(currentGeoType == Fem)
@@ -361,18 +380,18 @@ static void keyboard(int k, int st, float x, float y, void *data){
     s_isosurface = !s_isosurface;
     printf("Iso surface: %d\n", s_isosurface);
     if(currentGeoType == Fem)
-      s_femCudaRC->SetIsoSurface(s_isosurface);
+      s_femCudaRC->SetIsoSurfaceEnabled(s_isosurface);
     if(currentGeoType == Res)
-      s_resCudaRC->SetIsoSurface(s_isosurface);
+      s_resCudaRC->SetIsoSurfaceEnabled(s_isosurface);
     break;
 
   case 'v':
     s_volumetric = !s_volumetric;
     printf("Volumetric: %d\n", s_volumetric);
     if(currentGeoType == Fem)
-      s_femCudaRC->SetVolumetric(s_volumetric);
+      s_femCudaRC->SetVolumetricEnabled(s_volumetric);
     if(currentGeoType == Res)
-      s_resCudaRC->SetVolumetric(s_volumetric);
+      s_resCudaRC->SetVolumetricEnabled(s_volumetric);
     break;
 
   case 'r':
@@ -830,6 +849,8 @@ int main(int argc, char **argv){
       s_maxedge = atof(argv[i+1]);
     else if(strcmp(argv[i], "-tessellation") == 0)
       s_tessellation = atof(argv[i+1]);
+    else if(strcmp(argv[i], "-normalizefield") == 0)
+      s_normalizefield = atof(argv[i+1]);
     else if(strcmp(argv[i], "-interpol") == 0){
       char* interpoltype = argv[i+1];
       if(strcmp(interpoltype, "const") == 0)
@@ -865,7 +886,7 @@ int main(int argc, char **argv){
     s_resCudaRC->SetVolumetricColorScale(s_volcolorscale);
     s_resCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_resCudaRC->SetProperty(s_tpvproperty);
-    s_resCudaRC->SetDebug(false);
+    s_resCudaRC->SetDebugEnabled(false);
     s_resCudaRC->SetExplodedView(false);
     s_resCudaRC->SetMaxEdgeLengthEnabled(s_maxedge);
     s_resCudaRC->SetInterpolationType(currentInterpolType);
@@ -876,6 +897,7 @@ int main(int argc, char **argv){
     s_resCudaRC->SetWindowSize(s_winx, s_winy);
     s_resCudaRC->SetMaxNumPeel(s_maxpeel);
     s_resCudaRC->SetTessellation(s_tessellation);
+    s_resCudaRC->SetNormalizedField(s_normalizefield);
     s_resCudaRC->SetPaths(s_zetapsigammasize, s_zetapsigammapath, s_shaderpath);
     InitGL(argc, argv);
   }
@@ -888,7 +910,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetVolumetricColorScale(s_volcolorscale);
     s_femCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_femCudaRC->SetProperty(s_tpvproperty);
-    s_femCudaRC->SetDebug(false);
+    s_femCudaRC->SetDebugEnabled(false);
     s_femCudaRC->SetExplodedView(false);
     s_femCudaRC->SetMaxEdgeLengthEnabled(s_maxedge);
     s_femCudaRC->SetInterpolationType(currentInterpolType);
@@ -899,6 +921,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetWindowSize(s_winx, s_winy);
     s_femCudaRC->SetMaxNumPeel(s_maxpeel);
     s_femCudaRC->SetTessellation(s_tessellation);
+    s_femCudaRC->SetNormalizedField(s_normalizefield);
     s_femCudaRC->SetPaths(s_zetapsigammasize, s_zetapsigammapath, s_shaderpath);
     InitGL(argc, argv);
   }
@@ -912,7 +935,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetVolumetricColorScale(s_volcolorscale);
     s_femCudaRC->SetIsoColorScale(s_isocolorscale, s_isovalues);
     s_femCudaRC->SetProperty(s_tpvproperty);
-    s_femCudaRC->SetDebug(false);
+    s_femCudaRC->SetDebugEnabled(false);
     s_femCudaRC->SetExplodedView(false);
     s_femCudaRC->SetMaxEdgeLengthEnabled(s_maxedge);
     s_femCudaRC->SetInterpolationType(currentInterpolType);
@@ -923,6 +946,7 @@ int main(int argc, char **argv){
     s_femCudaRC->SetWindowSize(s_winx, s_winy);
     s_femCudaRC->SetMaxNumPeel(s_maxpeel);
     s_femCudaRC->SetTessellation(s_tessellation);
+    s_femCudaRC->SetNormalizedField(s_normalizefield);
     s_femCudaRC->SetPaths(s_zetapsigammasize, s_zetapsigammapath, s_shaderpath);
     InitGL(argc, argv);
   }
@@ -937,6 +961,7 @@ int main(int argc, char **argv){
     s_resHarc->SetShaderPath("../../../src/topsview/renderer/cg");
     s_resHarc->SetIsosurfacesEnabled(false);
     s_resHarc->SetMaxEdgeLengthEnabled(s_maxedge);
+    s_resHarc->SetNormalizedField(s_normalizefield);
     InitGL(argc, argv);
   }
   else if(strcmp(fileExtension, ".grid") == 0 || strcmp(fileExtension, ".solution") == 0){
@@ -949,6 +974,7 @@ int main(int argc, char **argv){
     s_femHarc->SetShaderPath("../../../src/topsview/renderer/cg");
     s_femHarc->SetIsosurfacesEnabled(false);
     s_femHarc->SetMaxEdgeLengthEnabled(s_maxedge);
+    s_femHarc->SetNormalizedField(s_normalizefield);
     InitGL(argc, argv);
   }
   else if(strcmp(fileExtension, ".node") == 0 || strcmp(fileExtension, ".ele") == 0){
@@ -961,6 +987,7 @@ int main(int argc, char **argv){
     s_femHarc->SetShaderPath("../../../src/topsview/renderer/cg");
     s_femHarc->SetIsosurfacesEnabled(false);
     s_femHarc->SetMaxEdgeLengthEnabled(s_maxedge);
+    s_femHarc->SetNormalizedField(s_normalizefield);
     InitGL(argc, argv);
   }
 #endif

@@ -28,9 +28,12 @@ enum InterpolType {Const = 0, Linear = 1, Quad = 2, Step = 3};
 
 struct Elem{
   float4 interpolfunc0;
+  float4 adj0;
 #ifdef CUDARC_HEX
   float4 interpolfunc1;
+  float4 adj1;
 #endif
+
 };
 
 struct Ray{
@@ -58,6 +61,25 @@ inline __host__ __device__ float4 cross(float4 a, float4 b)
 inline __host__ __device__ float permuted_inner_produtct(float4 pr, float4 qr, float4 ps, float4 qs)
 {
   return dot(pr, qs) + dot(qr, ps);
+}
+
+inline __device__ float intersect_ray_plane(float4 eyepos, float4 dir, float4 normal)
+{
+  //t = -(P0 . N + d) / (V . N) (http://www.cs.princeton.edu/courses/archive/fall00/cs426/lectures/raycast/sld017.htm)
+    //t = -(eyePos . normal + d) / (eyeDir . normal)
+  float samedir = dot(dir, normal);
+  if(samedir > 0)
+    return - dot(normal, eyepos) / samedir;
+  return CUDART_INF_F;
+}
+
+inline __device__ float intersect_ray_probeplane(float4 eyepos, float4 dir, float4 normal, float* tnear, float* tfar)
+{
+  float samedir = dot(dir, normal);
+  if(samedir > 0)
+    *tfar = fminf(- dot(normal, eyepos) / samedir, *tfar);
+  else if(samedir < 0)
+    *tnear = fmaxf(- dot(normal, eyepos) / samedir, *tnear);
 }
 
 
@@ -108,7 +130,8 @@ __device__ float Solve(Ray* ray, float4 v00, float4 v01, float4 v10, float4 v11,
 
 }
 
-__device__ float2 Intersect(Ray* ray, float4 v00, float4 v01, float4 v10, float4 v11, bool getfart){
+__device__ float2 IntersectBilinear(Ray* ray, float4 v00, float4 v01, float4 v10, float4 v11, bool getfart){
+
 
 
   float4 a = v11 - v10 - v01 + v00;
@@ -444,9 +467,9 @@ __device__ float FindScalar(Ray* ray, float p_t){
 /**
 * Find integration step (hex)
 */
-/*
-inline __device__ float FindIntegrationStep(Ray* ray, float t, float diffcpfront, float diffbackfront){
 
+inline __device__ float FindIntegrationStep(Ray* ray, float t, float diffcpfront, float diffbackfront){
+  /*
   float c0 = ray->currentelem.interpolfunc1.w;
   float c1 = ray->currentelem.interpolfunc0.x;
   float c2 = ray->currentelem.interpolfunc0.y;
@@ -471,9 +494,11 @@ inline __device__ float FindIntegrationStep(Ray* ray, float t, float diffcpfront
 
 
   float delta = 18 * a * b * c * d + 4 * b * b * b * d + b * b + c * c - 4 * a * c * c * c - 27 * a * a * d * d;
-  
+  */
+
+  return (ray->t) + (t - ray->t) * (diffcpfront / diffbackfront);
 }
-*/
+
 
 #else
 /**
@@ -663,6 +688,404 @@ __device__ void IntegrateRayLinear(Ray* ray, float4 eyepos, float raySegLength, 
 
 
 /**
+* Ray Probe box Intersection
+*/
+__device__ float IntersectProbeBox(Ray* ray, float* t, float3 probeboxmin, float3 probeboxmax){
+
+  
+  float4 pp;
+  float4 raypos;
+  float tprobenear;
+  float tprobefar;
+
+  pp.x = -1.0f; pp.y = 0.0f; pp.z = 0.0f; pp.w = probeboxmin.x;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+  
+  pp.x = 0.0f; pp.y = -1.0f; pp.z = 0.0f; pp.w = probeboxmin.y;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+
+  pp.x = 0.0f; pp.y = 0.0f; pp.z = -1.0f; pp.w = probeboxmin.z;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+
+  pp.x = 1.0f; pp.y = 0.0f; pp.z = 0.0f; pp.w = -probeboxmax.x;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+
+  pp.x = 0.0f; pp.y = 1.0f; pp.z = 0.0f; pp.w = -probeboxmax.y;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+
+  pp.x = 0.0f; pp.y = 0.0f; pp.z = 1.0f; pp.w = -probeboxmax.z;
+  intersect_ray_probeplane(ray->eyepos, ray->dir, pp, &tprobenear, &tprobefar);
+  
+  //Ray leaving probe box
+  if(*t > tprobefar){
+    //ray->frontid = 0;
+    if(tprobefar < 0){
+      *t = 0;
+      //ray->acccolor = make_float4(0.3, 0, 0, 1);
+    }
+    else{
+      *t = tprobefar;
+      //ray->backscalar = FindScalar(ray, *t);
+      //ray->acccolor = make_float4(1, 0, 0, 1);
+    }
+  }
+  
+  //Ray entering probe box
+  if(tprobenear > 0){
+    if(tprobenear >= *t){
+      *t = 0;
+      //ray->acccolor = make_float4(0, 0, 0.3, 1);
+    }
+    else{
+      *t = tprobenear;
+      ray->frontscalar = FindScalar(ray, *t);
+      //ray->acccolor = make_float4(0, 0, 1, 1);
+    }
+  }
+  *t = fmaxf(*t, 0);
+  
+}
+
+/**
+* Ray Plane Intersection (Plucker)
+*/
+#if !defined(CUDARC_HEX) && defined(CUDARC_PLUCKER)
+__device__ float Intersect(Ray* ray, float* t){
+  float4 v0 = tex1Dfetch(texNode0, ray->frontid);
+  float4 v1 = tex1Dfetch(texNode1, ray->frontid);
+  float4 v2 = tex1Dfetch(texNode2, ray->frontid);
+  float4 v3 = tex1Dfetch(texNode3, ray->frontid);
+
+  float4 dircrosseyepos = cross(ray->dir, ray->eyepos);
+
+  float4 v02 = (v0 - v2);
+  float4 q02 = cross(v02, v0);
+  float ps02 = permuted_inner_produtct(v02, q02, ray->dir, dircrosseyepos);
+
+  float4 v32 = (v3 - v2);
+  float4 q32 = cross(v32, v2);
+  float ps32 = permuted_inner_produtct(v32, q32, ray->dir, dircrosseyepos);
+
+  float4 v03 = (v0 - v3);
+  float4 q03 = cross(v03, v0);
+  float ps03 = permuted_inner_produtct(v03, q03, ray->dir, dircrosseyepos);
+
+  float4 v13 = (v1 - v3);
+  float4 q13 = cross(v13, v1);
+  float ps13 = permuted_inner_produtct(v13, q13, ray->dir, dircrosseyepos);
+
+  float4 v01 = (v0 - v1);
+  float4 q01 = cross(v01, v0);
+  float ps01 = permuted_inner_produtct(v01, q01, ray->dir, dircrosseyepos);
+
+  float4 v21 = (v2 - v1);
+  float4 q21 = cross(v21, v1);
+  float ps21 = permuted_inner_produtct(v21, q21, ray->dir, dircrosseyepos);
+
+  float round = 0.0f;
+  float4 point;
+  //Plucker tests
+  if(ray->frontface == 0.0f){
+
+    //Test against faces 1, 2, 3
+    if((-ps32 <= 0 && -ps03 <= 0 && ps02 <= 0)){
+      float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
+      if(constMemory.debug) ray->acccolor = make_float4(0, 1, 0, 1);
+      round = ray->currentelem.adj0.y;
+      point = u.x * v0 +  u.y * v2 + u.z * v3;
+      point.w = 1.0f;
+    }
+    else{
+      if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
+        float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
+        if(constMemory.debug) ray->acccolor = make_float4(0, 0, 1, 1);
+        round = ray->currentelem.adj0.z;
+        point = u.x * v0 +  u.y * v3 + u.z * v1;
+        point.w = 1.0f;
+      }
+      else{
+        if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
+          float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
+          if(constMemory.debug) ray->acccolor = make_float4(1, 0, 1, 1);
+          round = ray->currentelem.adj0.w;
+          point = u.x * v0 +  u.y * v1 + u.z * v2;
+          point.w = 1.0f;
+        }
+      } 
+    }
+  }
+  else if(ray->frontface == 1.0f){
+    //Test against faces 0, 2, 3
+    if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
+      float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
+      if(constMemory.debug) ray->acccolor = make_float4(1, 0, 0, 1);
+      round = ray->currentelem.adj0.x;
+      point = u.x * v2 +  u.y * v1 + u.z * v3;
+      point.w = 1.0f;
+    }
+    else{
+      if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
+        float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
+        if(constMemory.debug) ray->acccolor = make_float4(0, 0, 1, 1);
+        round = ray->currentelem.adj0.z;
+        point = u.x * v0 +  u.y * v3 + u.z * v1;
+        point.w = 1.0f;
+      }
+      else{
+        if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
+          float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
+          if(constMemory.debug) ray->acccolor = make_float4(1, 0, 1, 1);
+          round = ray->currentelem.adj0.w;
+          point = u.x * v0 +  u.y * v1 + u.z * v2;
+          point.w = 1.0f;
+        }
+      } 
+    }
+  }
+  else if(ray->frontface == 2.0f){
+    //Test against faces 0, 1, 3
+    if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
+      float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
+      if(constMemory.debug) ray->acccolor = make_float4(1, 0, 0, 1);
+      round = ray->currentelem.adj0.x;
+      point = u.x * v2 +  u.y * v1 + u.z * v3;
+      point.w = 1.0f;
+    }
+    else{
+      if((-ps32 <= 0 && -ps03 <= 0 && ps02<= 0)){
+        float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
+        if(constMemory.debug) ray->acccolor = make_float4(0, 1, 0, 1);
+        round = ray->currentelem.adj0.y;
+        point = u.x * v0 +  u.y * v2 + u.z * v3;
+        point.w = 1.0f;
+      }
+      else{
+        if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
+          float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
+          if(constMemory.debug) ray->acccolor = make_float4(1, 0, 1, 1);
+          round = ray->currentelem.adj0.w;
+          point = u.x * v0 +  u.y * v1 + u.z * v2;
+          point.w = 1.0f;
+        }
+      } 
+    }
+  }
+  else if(ray->frontface == 3.0f){
+    //Test against faces 0, 1, 2
+    if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
+      float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
+      if(constMemory.debug) ray->acccolor = make_float4(1, 0, 0, 1);
+      round = ray->currentelem.adj0.x;
+      point = u.x * v2 +  u.y * v1 + u.z * v3;
+      point.w = 1.0f;
+    }
+    else{
+      if((-ps32 <= 0 && -ps03 <= 0 && ps02 <= 0)){
+        float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
+        if(constMemory.debug) ray->acccolor = make_float4(0, 1, 0, 1);
+        round = ray->currentelem.adj0.y;
+        point = u.x * v0 +  u.y * v2 + u.z * v3;
+        point.w = 1.0f;
+      }
+      else{
+        if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
+          float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
+          if(constMemory.debug) ray->acccolor = make_float4(0, 0, 1, 1);
+          round = ray->currentelem.adj0.z;
+          point = u.x * v0 +  u.y * v3 + u.z * v1;
+          point.w = 1.0f;
+        }
+      } 
+    }
+  }
+
+
+  *t = length(point - ray->eyepos);
+  return round;
+}
+#endif
+
+#if !defined(CUDARC_PLUCKER)
+/**
+* Ray Plane Intersection
+*/
+__device__ float Intersect(Ray* ray, float* t){
+
+  float roundid;
+
+  /*Face 0*/
+  if(ray->frontface != 0){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace0Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(1, 0, 0, 1);
+      roundid = ray->currentelem.adj0.x;
+    }
+  }
+
+  /*Face 1*/
+  if(ray->frontface != 1){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace1Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(0, 1, 0, 1);
+      roundid = ray->currentelem.adj0.y;
+    }
+  }
+
+  /*Face 2*/
+  if(ray->frontface != 2){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace2Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(0, 0, 1, 1);
+      roundid = ray->currentelem.adj0.z;
+    }
+  }
+
+  /*Face 3*/
+  if(ray->frontface != 3){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace3Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(1, 1, 0, 1);
+#ifdef CUDARC_HEX
+      roundid = ray->currentelem.adj1.x;
+#else
+      roundid = ray->currentelem.adj0.w;
+#endif
+    }
+  }
+
+#ifdef CUDARC_HEX
+  /*Face 4*/
+  if(ray->frontface != 4){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace4Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(1, 0, 1, 1);
+      roundid = ray->currentelem.adj1.y;
+    }
+  }
+
+  /*Face 5*/
+  if(ray->frontface != 5){
+    //Triangle 0
+    float tintersect = intersect_ray_plane(ray->eyepos, ray->dir, tex1Dfetch(texFace5Eq, ray->frontid));
+    if(tintersect < *t){
+      *t = tintersect;
+      if(constMemory.debug > 0) ray->acccolor = make_float4(0, 1, 1, 1);
+      roundid = ray->currentelem.adj1.z;
+    }
+  }
+#endif
+
+  return roundid;
+}
+#endif
+
+/**
+* Ray Bilinear Patch Intersection
+*/
+#if defined(CUDARC_HEX) && defined(CUDARC_BILINEAR)
+__device__ float Intersect(Ray* ray, float* t){
+  
+  float round;
+
+  float4 v0 = tex1Dfetch(texNode0, ray->frontid);
+  float4 v1 = tex1Dfetch(texNode1, ray->frontid);
+  float4 v2 = tex1Dfetch(texNode2, ray->frontid);
+  float4 v3 = tex1Dfetch(texNode3, ray->frontid);
+  float4 v4 = tex1Dfetch(texNode4, ray->frontid);
+  float4 v5 = tex1Dfetch(texNode5, ray->frontid);
+  float4 v6 = tex1Dfetch(texNode6, ray->frontid);
+  float4 v7 = tex1Dfetch(texNode7, ray->frontid);
+
+
+  //Ray Bilinear patch intersection
+  float2 t0 = make_float2(CUDART_INF_F, 0);
+  float2 t1 = make_float2(CUDART_INF_F, 0);
+  float2 t2 = make_float2(CUDART_INF_F, 0);
+  float2 t3 = make_float2(CUDART_INF_F, 0);
+  float2 t4 = make_float2(CUDART_INF_F, 0);
+  float2 t5 = make_float2(CUDART_INF_F, 0);
+
+
+  ///res
+  /*
+  t0.x = IntersectBilinear(ray, v0, v1, v2, v3, threadRay->frontface == 0 ? 1 : 0).x;
+  t1.x = fminf(t, IntersectBilinear(ray, v4, v5, v6, v7, threadRay->frontface == 1 ? 1 : 0).x);
+  t2.x = fminf(t, IntersectBilinear(ray, v1, v3, v5, v7, threadRay->frontface == 2 ? 1 : 0).x);
+  t3.x = fminf(t, IntersectBilinear(ray, v0, v2, v4, v6, threadRay->frontface == 3 ? 1 : 0).x);
+  t4.x = fminf(t, IntersectBilinear(ray, v2, v3, v6, v7, threadRay->frontface == 5 ? 1 : 0).x);
+  t5.x = fminf(t, IntersectBilinear(ray, v0, v1, v4, v5, threadRay->frontface == 4 ? 1 : 0).x);
+  */
+
+  //fem
+  t0.x = IntersectBilinear(ray, v0, v1, v3, v2, ray->frontface == 1 ? 1 : 0).x;
+  t1.x = fminf(*t, IntersectBilinear(ray, v5, v4, v6, v7, ray->frontface == 0 ? 1 : 0).x);
+  t2.x = fminf(*t, IntersectBilinear(ray, v1, v2, v5, v6, ray->frontface == 2 ? 1 : 0).x);
+  t3.x = fminf(*t, IntersectBilinear(ray, v0, v3, v4, v7, ray->frontface == 3 ? 1 : 0).x);
+  t4.x = fminf(*t, IntersectBilinear(ray, v2, v3, v6, v7, ray->frontface == 5 ? 1 : 0).x);
+  t5.x = fminf(*t, IntersectBilinear(ray, v0, v1, v4, v5, ray->frontface == 4 ? 1 : 0).x);
+
+
+  if(t0.x < t1.x && t0.x < t2.x && t0.x < t3.x && t0.x < t4.x && t0.x < t5.x){
+    *t = t0.x;
+    //round = hexAdj1.y; //fem
+    round = ray->currentelem.adj0.x; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(1, 0, 0, 1);
+  }
+  if(t1.x < t0.x && t1.x < t2.x && t1.x < t3.x && t1.x < t4.x && t1.x < t5.x){
+    *t = t1.x;
+    //round = hexAdj1.x; //fem
+    round = ray->currentelem.adj0.y; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(0, 1, 0, 1);
+  }
+  if(t2.x < t0.x && t2.x < t1.x && t2.x < t3.x && t2.x < t4.x && t2.x < t5.x){
+    *t = t2.x;
+    //round = hexAdj1.z; //fem
+    round = ray->currentelem.adj0.z; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(0, 1, 1, 1);
+  }
+  if(t3.x < t0.x && t3.x < t1.x && t3.x < t2.x && t3.x < t4.x && t3.x < t5.x){
+    *t = t3.x;
+    //round = hexAdj2.x; //fem
+    round = ray->currentelem.adj1.x; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(0, 0, 1, 1);
+  }
+  if(t4.x < t0.x && t4.x < t1.x && t4.x < t2.x && t4.x < t3.x && t4.x < t5.x){
+    *t = t4.x;
+    //round = hexAdj2.z; //fem
+    round = ray->currentelem.adj1.x; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(1, 1, 0, 1);
+  }
+  if(t5.x < t0.x && t5.x < t1.x && t5.x < t2.x && t5.x < t3.x && t5.x < t4.x){
+    *t = t5.x;
+    //round = hexAdj2.y; //fem
+    round = ray->currentelem.adj1.y; //res
+    //round = 0;
+    if(constMemory.debug) ray->acccolor = make_float4(1, 0, 1, 1);
+  }
+
+  if(constMemory.debug) return;
+
+  return round;
+}
+#endif
+
+
+/**
 * Initialize function, calculate the starting position of the ray on the mesh
 */
 __device__ Ray Initialize(int x, int y, int offset, float4 eyePos){
@@ -688,6 +1111,7 @@ __device__ Ray Initialize(int x, int y, int offset, float4 eyePos){
   threadRay.acccolor = make_float4(0);
 #endif
 
+  
   threadRay.currentelem.interpolfunc0 = tex1Dfetch(texInterpolFunc0, threadRay.frontid);
 #ifdef CUDARC_HEX
   threadRay.currentelem.interpolfunc1 = tex1Dfetch(texInterpolFunc1, threadRay.frontid);
@@ -705,23 +1129,23 @@ __device__ Ray Initialize(int x, int y, int offset, float4 eyePos){
   float4 v7 = tex1Dfetch(texNode7, threadRay.frontid);
 
   if(threadRay.frontface == 0)
-    threadRay.t = Intersect(&threadRay, v5, v4, v6, v7, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v0, v1, v2, v3, false).x; //res
+    threadRay.t = IntersectBilinear(&threadRay, v5, v4, v6, v7, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v0, v1, v2, v3, false).x; //res
   else if(threadRay.frontface == 1)
-    threadRay.t = Intersect(&threadRay, v0, v1, v3, v2, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v4, v5, v6, v7, false).x; //res
+    threadRay.t = IntersectBilinear(&threadRay, v0, v1, v3, v2, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v4, v5, v6, v7, false).x; //res
   else if(threadRay.frontface == 2)
-    threadRay.t = Intersect(&threadRay, v1, v2, v5, v6, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v1, v3, v5, v7, false).x; //res
-  else if(threadRay.frontface == 3)'
-    threadRay.t = Intersect(&threadRay, v0, v3, v4, v7, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v0, v2, v4, v6, false).x; //res
+    threadRay.t = IntersectBilinear(&threadRay, v1, v2, v5, v6, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v1, v3, v5, v7, false).x; //res
+  else if(threadRay.frontface == 3)
+    threadRay.t = IntersectBilinear(&threadRay, v0, v3, v4, v7, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v0, v2, v4, v6, false).x; //res
   else if(threadRay.frontface == 4)
-    threadRay.t = Intersect(&threadRay, v0, v1, v4, v5, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v0, v1, v4, v5, false).x; //res
+    threadRay.t = IntersectBilinear(&threadRay, v0, v1, v4, v5, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v0, v1, v4, v5, false).x; //res
   else if(threadRay.frontface == 5)
-    threadRay.t = Intersect(&threadRay, v2, v3, v6, v7, false).x; //fem
-    //threadRay.t = Intersect(&threadRay, v2, v3, v6, v7, false).x; //res
+    threadRay.t = IntersectBilinear(&threadRay, v2, v3, v6, v7, false).x; //fem
+    //threadRay.t = IntersectBilinear(&threadRay, v2, v3, v6, v7, false).x; //res
 
   if(threadRay.t == CUDART_INF_F)
     threadRay.acccolor = make_float4(0,0,0,1);
@@ -747,7 +1171,7 @@ __device__ Ray Initialize(int x, int y, int offset, float4 eyePos){
 /**
 * Volumetric traverse the ray through the mesh
 */
-__device__ void Traverse(int x, int y, int offset, Ray* threadRay){
+__device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeboxmin, float3 probeboxmax){
 
   float4 planeEq;
   float sameDirection;
@@ -756,114 +1180,114 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
   int backfaceid = 0;
   float round = 0;
 
+  threadRay->currentelem.adj0 = tex1Dfetch(texAdj0, threadRay->frontid);
 #ifdef CUDARC_HEX
-  float4 hexAdj1 = tex1Dfetch(texAdj0, threadRay->frontid);
-  float4 hexAdj2 = tex1Dfetch(texAdj1, threadRay->frontid);
-#else
-  float4 tetAdj = tex1Dfetch(texAdj0, threadRay->frontid);
+  threadRay->currentelem.adj1 = tex1Dfetch(texAdj1, threadRay->frontid);
 #endif
 
-#ifdef CUDARC_HEX
-  float4 v0, v1, v2, v3, v4, v5, v6, v7;
-  float4 ray = cross(threadRay->dir, threadRay->eyepos);
-  /*
-  float4 v0 = tex1Dfetch(texNode0, threadRay->frontid);
-  float4 v1 = tex1Dfetch(texNode1, threadRay->frontid);
-  float4 v2 = tex1Dfetch(texNode2, threadRay->frontid);
-  float4 v3 = tex1Dfetch(texNode3, threadRay->frontid);
-  float4 v4 = tex1Dfetch(texNode4, threadRay->frontid);
-  float4 v5 = tex1Dfetch(texNode5, threadRay->frontid);
-  float4 v6 = tex1Dfetch(texNode6, threadRay->frontid);
-  float4 v7 = tex1Dfetch(texNode7, threadRay->frontid);
-  float4 ray = cross(threadRay->dir, threadRay->eyepos);
-  float4 point;
   
-  float4 v02 = (v0 - v2);
-  float4 q02 = cross(v02, v0);
-  float ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
-
-  float4 v32 = (v3 - v2);
-  float4 q32 = cross(v32, v2);
-  float ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
-
-  float4 v13 = (v1 - v3);
-  float4 q13 = cross(v13, v1);
-  float ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
-
-  float4 v01 = (v0 - v1);
-  float4 q01 = cross(v01, v0);
-  float ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
-
-  float4 v21 = (v2 - v1);
-  float4 q21 = cross(v21, v1);
-  float ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
-
-  float4 v76 = (v7 - v6);
-  float4 q76 = cross(v76, v6);
-  float ps76 = permuted_inner_produtct(v76, q76, threadRay->dir, ray);
-
-  float4 v57 = (v5 - v7);
-  float4 q57 = cross(v57, v7);
-  float ps57 = permuted_inner_produtct(v57, q57, threadRay->dir, ray);
-
-  float4 v46 = (v4 - v6);
-  float4 q46 = cross(v46, v6);
-  float ps46 = permuted_inner_produtct(v46, q46, threadRay->dir, ray);
-
-  float4 v45 = (v4 - v5);
-  float4 q45 = cross(v45, v5);
-  float ps45 = permuted_inner_produtct(v45, q45, threadRay->dir, ray);
-
-  float4 v26 = (v2 - v6);
-  float4 q26 = cross(v26, v6);
-  float ps26 = permuted_inner_produtct(v26, q26, threadRay->dir, ray);
-
-  float4 v37 = (v3 - v7);
-  float4 q37 = cross(v37, v7);
-  float ps37 = permuted_inner_produtct(v37, q37, threadRay->dir, ray);
-
-  float4 v04 = (v0 - v4);
-  float4 q04 = cross(v04, v4);
-  float ps04 = permuted_inner_produtct(v04, q04, threadRay->dir, ray);
-
-  float4 v15 = (v1 - v5);
-  float4 q15 = cross(v15, v5);
-  float ps15 = permuted_inner_produtct(v15, q15, threadRay->dir, ray);
-  */
-#else
-#ifdef CUDARC_PLUCKER
-  float4 v0 = tex1Dfetch(texNode0, threadRay->frontid);
-  float4 v1 = tex1Dfetch(texNode1, threadRay->frontid);
-  float4 v2 = tex1Dfetch(texNode2, threadRay->frontid);
-  float4 v3 = tex1Dfetch(texNode3, threadRay->frontid);
-  float4 ray = cross(threadRay->dir, threadRay->eyepos);
-  float4 point;
-
-  float4 v02 = (v0 - v2);
-  float4 q02 = cross(v02, v0);
-  float ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
-
-  float4 v32 = (v3 - v2);
-  float4 q32 = cross(v32, v2);
-  float ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
-
-  float4 v03 = (v0 - v3);
-  float4 q03 = cross(v03, v0);
-  float ps03 = permuted_inner_produtct(v03, q03, threadRay->dir, ray);
-
-  float4 v13 = (v1 - v3);
-  float4 q13 = cross(v13, v1);
-  float ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
-
-  float4 v01 = (v0 - v1);
-  float4 q01 = cross(v01, v0);
-  float ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
-
-  float4 v21 = (v2 - v1);
-  float4 q21 = cross(v21, v1);
-  float ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
-#endif
-#endif
+//#ifdef CUDARC_HEX
+//  float4 v0, v1, v2, v3, v4, v5, v6, v7;
+//  float4 ray = cross(threadRay->dir, threadRay->eyepos);
+//  /*
+//  float4 v0 = tex1Dfetch(texNode0, threadRay->frontid);
+//  float4 v1 = tex1Dfetch(texNode1, threadRay->frontid);
+//  float4 v2 = tex1Dfetch(texNode2, threadRay->frontid);
+//  float4 v3 = tex1Dfetch(texNode3, threadRay->frontid);
+//  float4 v4 = tex1Dfetch(texNode4, threadRay->frontid);
+//  float4 v5 = tex1Dfetch(texNode5, threadRay->frontid);
+//  float4 v6 = tex1Dfetch(texNode6, threadRay->frontid);
+//  float4 v7 = tex1Dfetch(texNode7, threadRay->frontid);
+//  float4 ray = cross(threadRay->dir, threadRay->eyepos);
+//  float4 point;
+//  
+//  float4 v02 = (v0 - v2);
+//  float4 q02 = cross(v02, v0);
+//  float ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
+//
+//  float4 v32 = (v3 - v2);
+//  float4 q32 = cross(v32, v2);
+//  float ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
+//
+//  float4 v13 = (v1 - v3);
+//  float4 q13 = cross(v13, v1);
+//  float ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
+//
+//  float4 v01 = (v0 - v1);
+//  float4 q01 = cross(v01, v0);
+//  float ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
+//
+//  float4 v21 = (v2 - v1);
+//  float4 q21 = cross(v21, v1);
+//  float ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
+//
+//  float4 v76 = (v7 - v6);
+//  float4 q76 = cross(v76, v6);
+//  float ps76 = permuted_inner_produtct(v76, q76, threadRay->dir, ray);
+//
+//  float4 v57 = (v5 - v7);
+//  float4 q57 = cross(v57, v7);
+//  float ps57 = permuted_inner_produtct(v57, q57, threadRay->dir, ray);
+//
+//  float4 v46 = (v4 - v6);
+//  float4 q46 = cross(v46, v6);
+//  float ps46 = permuted_inner_produtct(v46, q46, threadRay->dir, ray);
+//
+//  float4 v45 = (v4 - v5);
+//  float4 q45 = cross(v45, v5);
+//  float ps45 = permuted_inner_produtct(v45, q45, threadRay->dir, ray);
+//
+//  float4 v26 = (v2 - v6);
+//  float4 q26 = cross(v26, v6);
+//  float ps26 = permuted_inner_produtct(v26, q26, threadRay->dir, ray);
+//
+//  float4 v37 = (v3 - v7);
+//  float4 q37 = cross(v37, v7);
+//  float ps37 = permuted_inner_produtct(v37, q37, threadRay->dir, ray);
+//
+//  float4 v04 = (v0 - v4);
+//  float4 q04 = cross(v04, v4);
+//  float ps04 = permuted_inner_produtct(v04, q04, threadRay->dir, ray);
+//
+//  float4 v15 = (v1 - v5);
+//  float4 q15 = cross(v15, v5);
+//  float ps15 = permuted_inner_produtct(v15, q15, threadRay->dir, ray);
+//  */
+//#else
+//#ifdef CUDARC_PLUCKER
+//  float4 v0 = tex1Dfetch(texNode0, threadRay->frontid);
+//  float4 v1 = tex1Dfetch(texNode1, threadRay->frontid);
+//  float4 v2 = tex1Dfetch(texNode2, threadRay->frontid);
+//  float4 v3 = tex1Dfetch(texNode3, threadRay->frontid);
+//  float4 ray = cross(threadRay->dir, threadRay->eyepos);
+//  float4 point;
+//
+//  float4 v02 = (v0 - v2);
+//  float4 q02 = cross(v02, v0);
+//  float ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
+//
+//  float4 v32 = (v3 - v2);
+//  float4 q32 = cross(v32, v2);
+//  float ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
+//
+//  float4 v03 = (v0 - v3);
+//  float4 q03 = cross(v03, v0);
+//  float ps03 = permuted_inner_produtct(v03, q03, threadRay->dir, ray);
+//
+//  float4 v13 = (v1 - v3);
+//  float4 q13 = cross(v13, v1);
+//  float ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
+//
+//  float4 v01 = (v0 - v1);
+//  float4 q01 = cross(v01, v0);
+//  float ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
+//
+//  float4 v21 = (v2 - v1);
+//  float4 q21 = cross(v21, v1);
+//  float ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
+//#endif
+//#endif
+//  
 
 
   int aux = 0;
@@ -874,516 +1298,11 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
 
     aux++;
 
-    //t = -(P0 . N + d) / (V . N) (http://www.cs.princeton.edu/courses/archive/fall00/cs426/lectures/raycast/sld017.htm)
-    //t = -(eyePos . normal + d) / (eyeDir . normal)
+    
     threadRay->dir.w = 0;
     threadRay->eyepos.w = 1;
 
-#ifdef CUDARC_HEX
-#ifdef CUDARC_BILINEAR
-    v0 = tex1Dfetch(texNode0, threadRay->frontid);
-    v1 = tex1Dfetch(texNode1, threadRay->frontid);
-    v2 = tex1Dfetch(texNode2, threadRay->frontid);
-    v3 = tex1Dfetch(texNode3, threadRay->frontid);
-    v4 = tex1Dfetch(texNode4, threadRay->frontid);
-    v5 = tex1Dfetch(texNode5, threadRay->frontid);
-    v6 = tex1Dfetch(texNode6, threadRay->frontid);
-    v7 = tex1Dfetch(texNode7, threadRay->frontid);
-
-
-    //Ray Bilinear patch intersection
-    float2 t0 = make_float2(CUDART_INF_F, 0);
-    float2 t1 = make_float2(CUDART_INF_F, 0);
-    float2 t2 = make_float2(CUDART_INF_F, 0);
-    float2 t3 = make_float2(CUDART_INF_F, 0);
-    float2 t4 = make_float2(CUDART_INF_F, 0);
-    float2 t5 = make_float2(CUDART_INF_F, 0);
-
-    
-    ///res
-    /*
-    t0.x = Intersect(threadRay, v0, v1, v2, v3, threadRay->frontface == 0 ? 1 : 0).x;
-    t1.x = fminf(t, Intersect(threadRay, v4, v5, v6, v7, threadRay->frontface == 1 ? 1 : 0).x);
-    t2.x = fminf(t, Intersect(threadRay, v1, v3, v5, v7, threadRay->frontface == 2 ? 1 : 0).x);
-    t3.x = fminf(t, Intersect(threadRay, v0, v2, v4, v6, threadRay->frontface == 3 ? 1 : 0).x);
-    t4.x = fminf(t, Intersect(threadRay, v2, v3, v6, v7, threadRay->frontface == 5 ? 1 : 0).x);
-    t5.x = fminf(t, Intersect(threadRay, v0, v1, v4, v5, threadRay->frontface == 4 ? 1 : 0).x);
-    */
-    
-    //fem
-    
-    t0.x = Intersect(threadRay, v0, v1, v3, v2, threadRay->frontface == 1 ? 1 : 0).x;
-    t1.x = fminf(t, Intersect(threadRay, v5, v4, v6, v7, threadRay->frontface == 0 ? 1 : 0).x);
-    t2.x = fminf(t, Intersect(threadRay, v1, v2, v5, v6, threadRay->frontface == 2 ? 1 : 0).x);
-    t3.x = fminf(t, Intersect(threadRay, v0, v3, v4, v7, threadRay->frontface == 3 ? 1 : 0).x);
-    t4.x = fminf(t, Intersect(threadRay, v2, v3, v6, v7, threadRay->frontface == 5 ? 1 : 0).x);
-    t5.x = fminf(t, Intersect(threadRay, v0, v1, v4, v5, threadRay->frontface == 4 ? 1 : 0).x);
-    
-
-    if(t0.x < t1.x && t0.x < t2.x && t0.x < t3.x && t0.x < t4.x && t0.x < t5.x){
-      t = t0.x;
-      //round = hexAdj1.y; //fem
-      round = hexAdj1.x; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 0, 1);
-    }
-    if(t1.x < t0.x && t1.x < t2.x && t1.x < t3.x && t1.x < t4.x && t1.x < t5.x){
-      t = t1.x;
-      //round = hexAdj1.x; //fem
-      round = hexAdj1.y; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(0, 1, 0, 1);
-    }
-    if(t2.x < t0.x && t2.x < t1.x && t2.x < t3.x && t2.x < t4.x && t2.x < t5.x){
-      t = t2.x;
-      //round = hexAdj1.z; //fem
-      round = hexAdj1.z; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(0, 1, 1, 1);
-    }
-    if(t3.x < t0.x && t3.x < t1.x && t3.x < t2.x && t3.x < t4.x && t3.x < t5.x){
-      t = t3.x;
-      //round = hexAdj2.x; //fem
-      round = hexAdj2.x; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(0, 0, 1, 1);
-    }
-    if(t4.x < t0.x && t4.x < t1.x && t4.x < t2.x && t4.x < t3.x && t4.x < t5.x){
-      t = t4.x;
-      //round = hexAdj2.z; //fem
-      round = hexAdj2.z; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(1, 1, 0, 1);
-    }
-    if(t5.x < t0.x && t5.x < t1.x && t5.x < t2.x && t5.x < t3.x && t5.x < t4.x){
-      t = t5.x;
-      //round = hexAdj2.y; //fem
-      round = hexAdj2.y; //res
-      //round = 0;
-      if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 1, 1);
-    }
-
-    if(constMemory.debug) return;
-
-#else
-
-    /*Face 0*/
-    if(threadRay->frontface != 0){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace0Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(1, 0, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj1.x;
-        }
-      }
-    }
-
-    /*Face 1*/
-    if(threadRay->frontface != 1){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace1Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(0, 1, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj1.y;
-        }
-      }
-    }
-
-    /*Face 2*/
-    if(threadRay->frontface != 2){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace2Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(0, 0, 1, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj1.z;
-        }
-      }
-    }
-
-    /*Face 3*/
-    if(threadRay->frontface != 3){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace3Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(1, 1, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj2.x;
-        }
-      }
-    }
-
-    /*Face 4*/
-    if(threadRay->frontface != 4){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace4Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(1, 0, 1, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj2.y;
-        }
-      }
-    }
-
-    /*Face 5*/
-    if(threadRay->frontface != 5){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace5Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(0, 1, 1, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = hexAdj2.z;
-        }
-      }
-    }
-
-
-
-
-#endif
-#else
-#ifdef CUDARC_PLUCKER
-
-    v0 = tex1Dfetch(texNode0, threadRay->frontid);
-    v1 = tex1Dfetch(texNode1, threadRay->frontid);
-    v2 = tex1Dfetch(texNode2, threadRay->frontid);
-    v3 = tex1Dfetch(texNode3, threadRay->frontid);
-
-    v02 = (v0 - v2);
-    q02 = cross(v02, v0);
-    ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
-
-    v32 = (v3 - v2);
-    q32 = cross(v32, v2);
-    ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
-
-    v03 = (v0 - v3);
-    q03 = cross(v03, v0);
-    ps03 = permuted_inner_produtct(v03, q03, threadRay->dir, ray);
-
-    v13 = (v1 - v3);
-    q13 = cross(v13, v1);
-    ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
-
-    v01 = (v0 - v1);
-    q01 = cross(v01, v0);
-    ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
-
-    v21 = (v2 - v1);
-    q21 = cross(v21, v1);
-    ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
-
-
-    //Plucker tests
-    if(threadRay->frontface == 0.0f){
-      //Face 0: 1, 2, 3
-      /*
-      v0 = tex1Dfetch(texNode0, threadRay->frontid);
-
-      v01 = (v0 - v1);
-      q01 = cross(v01, v0);
-      ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
-
-      v02 = (v0 - v2);
-      q02 = cross(v02, v0);
-      ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
-
-      v03 = (v0 - v3);
-      q03 = cross(v03, v0);
-      ps03 = permuted_inner_produtct(v03, q03, threadRay->dir, ray);
-
-      v21 = - v21;
-      v13 = - v13;
-      v32 = - v32;
-      */
-      //Test against faces 1, 2, 3
-      if((-ps32 <= 0 && -ps03 <= 0 && ps02 <= 0)){
-        float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
-        if(constMemory.debug) threadRay->acccolor = make_float4(0, 1, 0, 1);
-        round = tetAdj.y;
-        point = u.x * v0 +  u.y * v2 + u.z * v3;
-        point.w = 1.0f;
-      }
-      else{
-        if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
-          float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
-          if(constMemory.debug) threadRay->acccolor = make_float4(0, 0, 1, 1);
-          round = tetAdj.z;
-          point = u.x * v0 +  u.y * v3 + u.z * v1;
-          point.w = 1.0f;
-        }
-        else{
-          if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
-            float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
-            if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 1, 1);
-            round = tetAdj.w;
-            point = u.x * v0 +  u.y * v1 + u.z * v2;
-            point.w = 1.0f;
-          }
-        } 
-      }
-    }
-    else if(threadRay->frontface == 1.0f){
-      //Face 1: 2, 0, 3
-
-      /*
-      v1 = tex1Dfetch(texNode1, threadRay->frontid);
-
-      v13 = (v1 - v3);
-      q13 = cross(v13, v1);
-      ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
-
-      v01 = (v0 - v1);
-      q01 = cross(v01, v0);
-      ps01 = permuted_inner_produtct(v01, q01, threadRay->dir, ray);
-
-      v21 = (v2 - v1);
-      q21 = cross(v21, v1);
-      ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
-
-      v02 = - v02;
-      v03 = - v03;
-      v32 = - v32;
-      */
-      //Test against faces 0, 2, 3
-      if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
-        float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
-        if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 0, 1);
-        round = tetAdj.x;
-        point = u.x * v2 +  u.y * v1 + u.z * v3;
-        point.w = 1.0f;
-      }
-      else{
-        if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
-          float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
-          if(constMemory.debug) threadRay->acccolor = make_float4(0, 0, 1, 1);
-          round = tetAdj.z;
-          point = u.x * v0 +  u.y * v3 + u.z * v1;
-          point.w = 1.0f;
-        }
-        else{
-          if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
-            float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
-            if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 1, 1);
-            round = tetAdj.w;
-            point = u.x * v0 +  u.y * v1 + u.z * v2;
-            point.w = 1.0f;
-          }
-        } 
-      }
-    }
-    else if(threadRay->frontface == 2.0f){
-      //Face 2: 3, 0, 1
-      /*
-      v2 = tex1Dfetch(texNode2, threadRay->frontid);
-
-      v02 = (v0 - v2);
-      q02 = cross(v02, v0);
-      ps02 = permuted_inner_produtct(v02, q02, threadRay->dir, ray);
-
-      v32 = (v3 - v2);
-      q32 = cross(v32, v2);
-      ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
-
-      v21 = (v2 - v1);
-      q21 = cross(v21, v1);
-      ps21 = permuted_inner_produtct(v21, q21, threadRay->dir, ray);
-
-      v01 = - v01;
-      v03 = - v03;
-      v13 = - v13;
-      */
-      //Test against faces 0, 1, 3
-      if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
-        float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
-        if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 0, 1);
-        round = tetAdj.x;
-        point = u.x * v2 +  u.y * v1 + u.z * v3;
-        point.w = 1.0f;
-      }
-      else{
-        if((-ps32 <= 0 && -ps03 <= 0 && ps02<= 0)){
-          float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
-          if(constMemory.debug) threadRay->acccolor = make_float4(0, 1, 0, 1);
-          round = tetAdj.y;
-          point = u.x * v0 +  u.y * v2 + u.z * v3;
-          point.w = 1.0f;
-        }
-        else{
-          if((-ps21 <= 0 && -ps02 <= 0 && ps01 <= 0)){
-            float3 u = make_float3(-ps21, -ps02, ps01) / (-ps21 -ps02 + ps01);
-            if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 1, 1);
-            round = tetAdj.w;
-            point = u.x * v0 +  u.y * v1 + u.z * v2;
-            point.w = 1.0f;
-          }
-        } 
-      }
-    }
-    else if(threadRay->frontface == 3.0f){
-      //Face 3: 1, 0, 2
-
-      //threadRay->acccolor = make_float4(1, 0, 0, 1);
-      //return;
-      /*
-      v3 = tex1Dfetch(texNode3, threadRay->frontid);
-
-      v32 = (v3 - v2);
-      q32 = cross(v32, v2);
-      ps32 = permuted_inner_produtct(v32, q32, threadRay->dir, ray);
-
-      v03 = (v0 - v3);
-      q03 = cross(v03, v0);
-      ps03 = permuted_inner_produtct(v03, q03, threadRay->dir, ray);
-
-      v13 = (v1 - v3);
-      q13 = cross(v13, v1);
-      ps13 = permuted_inner_produtct(v13, q13, threadRay->dir, ray);
-
-      v01 = - v01;
-      v02 = - v02;
-      v21 = - v21;
-      */
-      //Test against faces 0, 1, 2
-      if((ps13 <= 0 && ps32 <= 0 && ps21 <= 0)){
-        float3 u = make_float3(ps13, ps32, ps21) / (ps13 + ps32 + ps21);
-        if(constMemory.debug) threadRay->acccolor = make_float4(1, 0, 0, 1);
-        round = tetAdj.x;
-        point = u.x * v2 +  u.y * v1 + u.z * v3;
-        point.w = 1.0f;
-      }
-      else{
-        if((-ps32 <= 0 && -ps03 <= 0 && ps02 <= 0)){
-          float3 u = make_float3(-ps32, -ps03, ps02) / (-ps32 -ps03 + ps02);
-          if(constMemory.debug) threadRay->acccolor = make_float4(0, 1, 0, 1);
-          round = tetAdj.y;
-          point = u.x * v0 +  u.y * v2 + u.z * v3;
-          point.w = 1.0f;
-        }
-        else{
-          if((-ps13 <= 0 && -ps01 <= 0 && ps03 <= 0)){
-            float3 u = make_float3(-ps13, -ps01, ps03) / (-ps13 -ps01 + ps03);
-            if(constMemory.debug) threadRay->acccolor = make_float4(0, 0, 1, 1);
-            round = tetAdj.z;
-            point = u.x * v0 +  u.y * v3 + u.z * v1;
-            point.w = 1.0f;
-          }
-        } 
-      }
-    }
-
-
-    t = length(point - threadRay->eyepos);
-    //threadRay->acccolor = make_float4(t, t, t, 1);
-
-    //threadRay->acccolor = make_float4(normalize(point - eyePos).x, normalize(point - eyePos).y, normalize(point - eyePos).z, 1);
-    //return;
-
-#else
-
-    /*Face 0*/
-    if(threadRay->frontface != 0){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace0Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(1, 0, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = tetAdj.x;
-        }
-      }
-    }
-
-    /*Face 1*/
-    if(threadRay->frontface != 1){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace1Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(0, 1, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = tetAdj.y;
-        }
-      }
-    }
-
-    /*Face 2*/
-    if(threadRay->frontface != 2){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace2Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(0, 0, 1, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = tetAdj.z;
-        }
-      }
-    }
-
-    /*Face 3*/
-    if(threadRay->frontface != 3){
-      //Triangle 0
-      planeEq = tex1Dfetch(texFace3Eq, threadRay->frontid);
-      sameDirection = dot(threadRay->dir, planeEq);
-      if(sameDirection > 0){
-        sameDirection = - dot(planeEq, threadRay->eyepos) / sameDirection;
-        if(sameDirection < t){
-          t = sameDirection;
-          if(constMemory.debug > 0) threadRay->acccolor = make_float4(1, 1, 0, 1);
-          //threadRay->accColor = make_float4(0.5, 0.5, 0.5, 1);
-          round = tetAdj.w;
-        }
-      }
-    }
-    /*
-    float4 tempdir;
-    if(t >= 0 && t < CUDART_INF_F){
-    tempdir = (threadRay->eyepos + threadRay->dir * t) - threadRay->eyepos;
-    }
-    else{
-    tempdir = make_float4(0, 0, 0, 0);
-    }
-    tempdir = normalize(tempdir);
-    threadRay->acccolor = make_float4(tempdir.x, tempdir.y, tempdir.z, 1);
-    return;
-    */
-#endif
-#endif
+    round = Intersect(threadRay, &t);
 
     int rounded = floor(round + 0.5f);
 #ifdef CUDARC_HEX
@@ -1421,23 +1340,24 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
       }
     }
     else{
-      float isocpscalar = 3.0f;
-      float volcpscalar = 3.0f;
 
-      if(constMemory.isosurface)
-        isocpscalar = FindControlPoint(threadRay, tetraBackScalar, tex1D(texIsoControlPoints, threadRay->frontscalar));
-
-      if(constMemory.volumetric)
-        volcpscalar = FindControlPoint(threadRay, tetraBackScalar, tex1D(texVolumetricControlPoints, threadRay->frontscalar));
       
-
-      //Find if tetra contains cp
-      float diffisocpfront = fabs(isocpscalar - threadRay->frontscalar);
-      float diffvolcpfront = fabs(volcpscalar - threadRay->frontscalar);
-      float diffbackfront = fabs(tetraBackScalar - threadRay->frontscalar);
 
       float diffcpfront = 3.0f;
       float cpscalar = 3.0f;
+      float volcpscalar = 3.0f;
+      if(constMemory.volumetric)
+        volcpscalar = FindControlPoint(threadRay, tetraBackScalar, tex1D(texVolumetricControlPoints, threadRay->frontscalar));
+
+      float diffvolcpfront = fabs(volcpscalar - threadRay->frontscalar);
+
+#ifdef CUDARC_ISOSURFACE
+      float isocpscalar = 3.0f;
+      if(constMemory.isosurface)
+        isocpscalar = FindControlPoint(threadRay, tetraBackScalar, tex1D(texIsoControlPoints, threadRay->frontscalar));
+      
+      //Find which control point is the smaller one (cp on the isosurface or cp on the volumetric transfer function)
+      float diffisocpfront = fabs(isocpscalar - threadRay->frontscalar);
       if(diffisocpfront - diffvolcpfront < 1e-6){
         diffcpfront = diffisocpfront;
         cpscalar = isocpscalar;
@@ -1446,7 +1366,14 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
         diffcpfront = diffvolcpfront;
         cpscalar = volcpscalar;
       }
+#else
+      diffcpfront = diffvolcpfront;
+      cpscalar = volcpscalar;
+#endif
 
+
+      //Find if tetra contains cp
+      float diffbackfront = fabs(tetraBackScalar - threadRay->frontscalar);
       if(diffcpfront - diffbackfront < 1e-6){
         //Integrate between front and iso, but dont traverse to the next tetra
         backid = threadRay->frontid;
@@ -1454,41 +1381,6 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
         tetraBackScalar = cpscalar;
         
         t = FindIntegrationStep(threadRay, t, diffcpfront, diffbackfront);
-        
-        /*
-        float c0 = threadRay->currentelem.interpolfunc1.w;
-        float c1 = threadRay->currentelem.interpolfunc0.x;
-        float c2 = threadRay->currentelem.interpolfunc0.y;
-        float c3 = threadRay->currentelem.interpolfunc0.z;
-        float c4 = threadRay->currentelem.interpolfunc0.w;
-        float c5 = threadRay->currentelem.interpolfunc1.x;
-        float c6 = threadRay->currentelem.interpolfunc1.y;
-        float c7 = threadRay->currentelem.interpolfunc1.z;
-
-        float ox = threadRay->eyepos.x;
-        float oy = threadRay->eyepos.y;
-        float oz = threadRay->eyepos.z;
-
-        float dx = threadRay->dir.x;
-        float dy = threadRay->dir.y;
-        float dz = threadRay->dir.z;
-
-        float a = c0 + c1*ox + c2*oy + c4*ox*oy + c3*oz + c6*ox*oz + c5*oy*oz + c7*ox*oy*oz;
-        float b = c1*dx + c2*dy + c3*dz + c4*dy*ox + c6*dz*ox + c4*dx*oy + c5*dz*oy + c7*dz*ox*oy + c6*dx*oz + c5*dy*oz + c7*dy*ox*oz + c7*dx*oy*oz;
-        float c = c4*dx*dy + c6*dx*dz + c5*dy*dz + c7*dy*dz*ox + c7*dx*dz*oy + c7*dx*dy*oz;
-        float d = c7*dx*dy*dz - cpscalar;
-
-
-        float delta = 18.0f * a * b * c * d + 4.0f * b * b * b * d + b * b + c * c - 4 * a * c * c * c - 27.0f * a * a * d * d;
-
-        if(delta > 0.0f)
-          threadRay->acccolor = make_float4(1, 0, 0, 1);
-        else if(delta == 0)
-          threadRay->acccolor = make_float4(0, 1, 0, 1);
-        else
-          threadRay->acccolor = make_float4(0, 0, 1, 1);
-        return;
-        */
       }
       
 
@@ -1505,8 +1397,16 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
           }
         }
       }
+
+      //Probe box intersection
+#ifdef CUDARC_PROBE_BOX
+    if(constMemory.probebox > 0)
+      IntersectProbeBox(threadRay, &t, probeboxmin, probeboxmax);
+    //return;
+#endif
       
       //Isosurface
+#ifdef CUDARC_ISOSURFACE
       if(constMemory.isosurface > 0 && backid == threadRay->frontid && cpscalar == isocpscalar){
 
 #ifdef CUDARC_GRADIENT_PERVERTEX
@@ -1526,13 +1426,25 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
         color.x *= abs(dot(N, L));
         color.y *= abs(dot(N, L));
         color.z *= abs(dot(N, L));
-        color.x *= color.w; color.y *= color.w; color.z *= color.w;
+
         
+
+#ifdef CUDARC_WHITE
+        color.x = (1.0f - color.x) * (color.w);
+        color.y = (1.0f - color.y) * (color.w);
+        color.z = (1.0f - color.z) * (color.w);
+        threadRay->acccolor += (1.0f - threadRay->acccolor.w) * make_float4(-color.x, -color.y, -color.z, color.w);
+#else
+        color.x *= (color.w);
+        color.y *= (color.w);
+        color.z *= (color.w);
         threadRay->acccolor += (1.0f - threadRay->acccolor.w) * color;
-        //threadRay->acccolor = make_float4(make_float3(color), 1);
-        //threadRay->acccolor = make_float4(1, 0, 0, 1);
+#endif
       }
+
+#endif
     }
+
 
     //threadRay->acccolor.w = 1;
 
@@ -1543,12 +1455,10 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay){
     threadRay->t = t;
 
     threadRay->currentelem.interpolfunc0 = tex1Dfetch(texInterpolFunc0, threadRay->frontid);
+    threadRay->currentelem.adj0 = tex1Dfetch(texAdj0, threadRay->frontid);
 #ifdef CUDARC_HEX
     threadRay->currentelem.interpolfunc1 = tex1Dfetch(texInterpolFunc1, threadRay->frontid);
-    hexAdj1 = tex1Dfetch(texAdj0, threadRay->frontid);
-    hexAdj2 = tex1Dfetch(texAdj1, threadRay->frontid);
-#else
-    tetAdj = tex1Dfetch(texAdj0, threadRay->frontid);
+    threadRay->currentelem.adj1 = tex1Dfetch(texAdj1, threadRay->frontid);
 #endif
     t = CUDART_INF_F;
     backid = 0;
@@ -1587,7 +1497,7 @@ extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput){
 /**
 * CUDA callback (device)
 */
-__global__ void Run(int depthPeelPass, float4 eyePos, float4* dev_outputData){
+__global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3 probeboxmax, float4* dev_outputData){
 
   int x = blockIdx.x*blockDim.x + threadIdx.x;
   int y = blockIdx.y*blockDim.y + threadIdx.y;
@@ -1600,7 +1510,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float4* dev_outputData){
   
 
   if(threadRay.frontid != 0)
-    Traverse(x, y, offset, &threadRay);
+    Traverse(x, y, offset, &threadRay, probeboxmin, probeboxmax);
 
 
   dev_outputData[offset] = threadRay.acccolor;
@@ -1609,7 +1519,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float4* dev_outputData){
 /**
 * CUDA callback (host)
 */
-extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, int handleTexIntersect){
+extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect){
 
 #ifdef CUDARC_TIME
   cudaEvent_t start, stop;
@@ -1664,10 +1574,6 @@ extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPas
   texZetaPsiGamma.normalized = true;
   CUDA_SAFE_CALL(cudaBindTextureToArray(texZetaPsiGamma, dev_zetaPsiGamma));
 
-
-  //Camera settings
-  float4 eyePos = make_float4(p_eyePos[0], p_eyePos[1], p_eyePos[2], 1);
-
 #ifdef CUDARC_TIME
   CUDA_SAFE_CALL(cudaEventRecord(stop, 0));
   CUDA_SAFE_CALL(cudaEventSynchronize(stop));
@@ -1677,7 +1583,11 @@ extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPas
 #endif
 
   //Kernel call
-  Run<<<grids, threads>>>(depthPeelPass, eyePos, dev_outputData);
+  Run<<<grids, threads>>>(depthPeelPass, 
+                          make_float4(p_eyePos[0], p_eyePos[1], p_eyePos[2], 1),
+                          make_float3(probeboxmin[0], probeboxmin[1], probeboxmin[2]),
+                          make_float3(probeboxmax[0], probeboxmax[1], probeboxmax[2]),
+                          dev_outputData);
 
 
   CUDA_SAFE_CALL(cudaGraphicsUnmapResources( 1, &cudaPboHandleOutput, NULL ) );
@@ -1997,7 +1907,10 @@ extern "C" void printInfoGPUMemory(){
 /**
 * Set const memory values
 */
-extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey, bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps, int p_numtraverses, int p_numelem, bool p_isosurface, bool p_volumetric){
+extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey,
+                       bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps,
+                       int p_numtraverses, int p_numelem,
+                       bool p_isosurface, bool p_volumetric, bool p_probebox){
 
   grids = dim3(p_winsizex / p_blocksizex, p_winsizey / p_blocksizey);
   threads = dim3(p_blocksizex, p_blocksizey);
@@ -2012,6 +1925,7 @@ extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p
   tempConstMemory->debug = p_debug;
   tempConstMemory->isosurface = p_isosurface;
   tempConstMemory->volumetric = p_volumetric;
+  tempConstMemory->probebox = p_probebox;
 
   CUDA_SAFE_CALL(cudaMemcpyToSymbol(constMemory, tempConstMemory, sizeof(ConstMemory)));
   delete tempConstMemory;
