@@ -40,20 +40,20 @@
 #include <stdlib.h>
 
 
-extern "C" void run(float* kernelTime, float* overheadTime, int depthPeelPass, float* p_eyePos, int handleTexIntersect);
+extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect);
 extern "C" void deleteGPUTextures();
 extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput);
-extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey, bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps, int p_numtraverses, int p_numelem, bool p_isosurface, bool p_volumetric);
+extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey, bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps, int p_numtraverses, int p_numelem, bool p_isosurface, bool p_volumetric, bool p_probebox);
 extern "C" void createGPUAdjTex(int index, int size, float* data);
 extern "C" void createGPUCollisionTex(int fi, int size, float* data);
 extern "C" void createGPUInterpolFuncTex(int index, int size, float* data);
-#ifdef CUDARC_GRADIENT_PERVERTEX
-	extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
-#endif 
 extern "C" void createGPUColorScaleTex(int numValues, int size, float* volcolorscaledata, float* isocolorscale);
 extern "C" void createGPUIsoControlPointsTex(int numValues, int size, float* data);
 extern "C" void createGPUVolControlPointsTex(int numValues, int size, float* data);
 extern "C" void createGPUZetaPsiGammaTex(int numValues, int size, float* data);
+#ifdef CUDARC_GRADIENT_PERVERTEX
+extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
+#endif 
 extern "C" void printInfoGPUMemory();
 
 
@@ -72,6 +72,8 @@ CudaRC<MODELCLASS>::CudaRC(){
   m_debug = false;
   m_isosurface = false;
   m_volumetric = true;
+  m_probeboxenabled = false;
+  m_normalizedfield = true;
   m_uglFbIntersect = new UGLFrameBuffer[2];
   m_uglTexIntersect = new UGLTexture[2];
   m_uglDepthIntersect = new UGLTexture[2];
@@ -154,7 +156,7 @@ void CudaRC<MODELCLASS>::Update(){
   if(m_update_cuda){
     float maxedge = m_maxedgeenabled ? m_tetraGeometry->GetMaxEdgeLength() : 1.0f;
     int numelem = m_memoryInfo.numElem;
-    update(m_blocksize.x, m_blocksize.y, m_winsize.x, m_winsize.y, m_debug, maxedge, m_interpoltype, m_numsteps, m_numtraverses, numelem, m_isosurface, m_volumetric);
+    update(m_blocksize.x, m_blocksize.y, m_winsize.x, m_winsize.y, m_debug, maxedge, m_interpoltype, m_numsteps, m_numtraverses, numelem, m_isosurface, m_volumetric, m_probeboxenabled);
   }
 
   if(m_update_maxnumpeel){
@@ -166,6 +168,7 @@ void CudaRC<MODELCLASS>::Update(){
 
   if(m_update_geometry){
     m_tetraGeometry->SetField(m_property);
+    m_tetraGeometry->SetNormalizeField(m_normalizedfield);
     m_tetraGeometry->Update();
 
     float** adjacenciesData = new float*[m_memoryInfo.numAdjTex];
@@ -223,15 +226,12 @@ void CudaRC<MODELCLASS>::Update(){
 
   if(m_update_property){
     float** interpolFuncData = new float*[m_memoryInfo.numInterpolFuncTex];
-
     for(int i=0; i<m_memoryInfo.numInterpolFuncTex; i++)
       interpolFuncData[i] = new float[4 * (m_memoryInfo.numElem + 1)];
 
-	float** gradientVertexData = new float*[m_memoryInfo.numNodes];
-    
-	for(int i=0; i<m_memoryInfo.numNodes; i++){
-      gradientVertexData[i] = new float[4 * (m_memoryInfo.numElem + 1)];
-    }
+	  float** gradientVertexData = new float*[m_memoryInfo.numNodes];
+	  for(int i=0; i<m_memoryInfo.numNodes; i++)
+        gradientVertexData[i] = new float[4 * (m_memoryInfo.numElem + 1)];
 
 #ifdef CUDARC_HEX
     BuildHexaInterpolFuncTexture(interpolFuncData);
@@ -1319,7 +1319,7 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyePos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug){
+void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug){
 
   
   Update();
@@ -1363,7 +1363,7 @@ void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyePos, float* eyeDir, flo
       m_shaderIntersect->Load();
       m_uglDepthIntersect[backIndex].Load();
       {
-        m_shaderIntersect->SetConstant(Shader::FP, "eyePos", eyePos[0], eyePos[1], eyePos[2]);
+        m_shaderIntersect->SetConstant(Shader::FP, "eyePos", eyepos[0], eyepos[1], eyepos[2]);
         m_shaderIntersect->SetConstant(Shader::FP, "depthPeelPass", (float)i);
         m_shaderIntersect->SetConstant(Shader::FP, "winSize", m_winsize.x, m_winsize.y);
         m_shaderIntersect->BindTexture("depthSampler", m_uglDepthIntersect[backIndex].GetLoadedUnit());
@@ -1372,7 +1372,7 @@ void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyePos, float* eyeDir, flo
         glStencilFunc(GL_EQUAL, 1, 1);
         glStencilOp(GL_ZERO, GL_KEEP, GL_KEEP);
         glBeginQuery(GL_SAMPLES_PASSED, m_handleOccQuery);
-        RenderSinglePass(eyePos);
+        RenderSinglePass(eyepos);
         glEndQuery(GL_SAMPLES_PASSED);
         glGetQueryObjectiv(m_handleOccQuery, GL_QUERY_RESULT, &occQueryCount);
       }
@@ -1395,9 +1395,9 @@ void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyePos, float* eyeDir, flo
     //CUDA
     if(bdryonly == false){
       if(m_numpeeling == 0)
-        run(&kernelCallTime, &overheadTime, i, eyePos, m_uglTexIntersect[currentIndex].GetTextureId());
+        run(&kernelCallTime, &overheadTime, i, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
       else if(m_numpeeling == i)
-        run(&kernelCallTime, &overheadTime, 0, eyePos, m_uglTexIntersect[currentIndex].GetTextureId());
+        run(&kernelCallTime, &overheadTime, 0, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
     }
 
     //Swap
@@ -1598,21 +1598,42 @@ void CudaRC<MODELCLASS>::SetMaxEdgeLengthEnabled(bool flag){
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetDebug(bool flag){
+void CudaRC<MODELCLASS>::SetDebugEnabled(bool flag){
   m_debug = flag;
   m_update_cuda = true;
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetIsoSurface(bool flag){
+void CudaRC<MODELCLASS>::SetIsoSurfaceEnabled(bool flag){
   m_isosurface = flag;
   m_update_cuda = true;
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetVolumetric(bool flag){
+void CudaRC<MODELCLASS>::SetVolumetricEnabled(bool flag){
   m_volumetric = flag;
   m_update_cuda = true;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetProbeBoxEnabled(bool flag){
+  m_probeboxenabled = flag;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetNormalizedField(bool flag){
+  m_normalizedfield = flag;
+  m_update_geometry = true;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetProbeBox(float xmin, float xmax, float ymin, float ymax, float zmin, float zmax){
+  m_probeboxmin.x = xmin;
+  m_probeboxmin.y = ymin;
+  m_probeboxmin.z = zmin;
+  m_probeboxmax.x = xmax;
+  m_probeboxmax.y = ymax;
+  m_probeboxmax.z = zmax;
 }
 
 MODEL_CLASS_TEMPLATE

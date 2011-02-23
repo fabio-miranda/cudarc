@@ -115,6 +115,7 @@ struct ConstMemory{
   float numtraverses;
   float isosurface;
   float volumetric;
+  float probebox;
 };
 
 
