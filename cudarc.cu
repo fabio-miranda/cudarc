@@ -47,9 +47,64 @@ struct Ray{
   Elem currentelem;
 };
 
+struct Matrix2x2{
+	/*  Matrix2x2
+		entries[0], entries[2]
+		entries[1], entries[3]
+	*/
+   float entries[4];
+};
+
+struct Matrix3x3{
+	/*  Matrix3x3
+		entries[0], entries[3], entries[6]
+		entries[1], entries[4], entries[7]
+		entries[2], entries[5], entries[8]
+	*/
+	float entries[9];
+};
+
 inline __host__ __device__ float4 operator*(float4 a, float4 b)
 {
   return make_float4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w);
+}
+
+inline __host__ __device__ Matrix3x3 operator*( Matrix3x3 A, Matrix3x3 B )
+{
+	Matrix3x3 C;
+
+	C.entries[0] = A.entries[0]*B.entries[0] + A.entries[1]*B.entries[3] + A.entries[2]*B.entries[6];
+	C.entries[1] = A.entries[0]*B.entries[1] + A.entries[1]*B.entries[4] + A.entries[2]*B.entries[7];
+	C.entries[2] = A.entries[0]*B.entries[2] + A.entries[1]*B.entries[5] + A.entries[2]*B.entries[8];
+
+	C.entries[3] = A.entries[3]*B.entries[0] + A.entries[4]*B.entries[3] + A.entries[5]*B.entries[6];
+	C.entries[4] = A.entries[3]*B.entries[1] + A.entries[4]*B.entries[4] + A.entries[5]*B.entries[7];
+	C.entries[5] = A.entries[3]*B.entries[2] + A.entries[4]*B.entries[5] + A.entries[5]*B.entries[8];
+			  
+	C.entries[6] = A.entries[6]*B.entries[0] + A.entries[7]*B.entries[3] + A.entries[8]*B.entries[6];
+	C.entries[7] = A.entries[6]*B.entries[1] + A.entries[7]*B.entries[4] + A.entries[8]*B.entries[7];
+	C.entries[8] = A.entries[6]*B.entries[2] + A.entries[7]*B.entries[5] + A.entries[8]*B.entries[8];
+
+	return C;
+}
+
+inline __device__ Matrix3x3 operator*( float factor, Matrix3x3 A )
+{
+	for(int i=0; i<9; i++ ){
+		A.entries[i] = A.entries[i]*factor;
+	}
+
+	return A;
+}
+
+inline __device__ float3 operator*( Matrix3x3 A, float3 p )
+{
+	float3 result;
+	result.x = A.entries[0]*p.x + A.entries[3]*p.y + A.entries[6]*p.z;
+	result.y = A.entries[1]*p.x + A.entries[4]*p.y + A.entries[7]*p.z;
+	result.z = A.entries[2]*p.x + A.entries[5]*p.y + A.entries[8]*p.z;
+
+	return result;
 }
 
 inline __host__ __device__ float4 cross(float4 a, float4 b)
@@ -1168,6 +1223,117 @@ __device__ Ray Initialize(int x, int y, int offset, float4 eyePos){
 
 }
 
+__device__ Matrix3x3 vectorToMatrix3x3( float3 u, float3 v, float3 w ){
+	Matrix3x3 M;
+	M.entries[0] = u.x; M.entries[3] = v.x; M.entries[6] = w.x;
+	M.entries[1] = u.y; M.entries[4] = v.y; M.entries[7] = w.y;
+	M.entries[2] = u.z; M.entries[5] = v.z; M.entries[8] = w.z;
+
+	return M;
+}
+
+__device__ float determinant3x3( Matrix3x3 matrix ){
+	return 	(-matrix.entries[6]*matrix.entries[4]*matrix.entries[2] - matrix.entries[7]*matrix.entries[5]*matrix.entries[0] - matrix.entries[8]*matrix.entries[3]*matrix.entries[1]
+	+ matrix.entries[0]*matrix.entries[4]*matrix.entries[8] + matrix.entries[1]*matrix.entries[5]*matrix.entries[6] + matrix.entries[2]*matrix.entries[3]*matrix.entries[7]);
+}
+
+__device__ float determinant2x2( Matrix2x2 matrix ){
+	return 	( matrix.entries[0]*matrix.entries[3] - matrix.entries[2]*matrix.entries[1] );
+}
+
+__device__ Matrix2x2 valuesToMatrix2x2( float a, float b, float c, float d ){
+	Matrix2x2 M;
+	M.entries[0] = a;
+	M.entries[1] = b; //verifica direito
+	M.entries[2] = c;
+	M.entries[3] = d;
+	return M;	
+}
+
+__device__ Matrix3x3 valuesToMatrix3x3( float a, float b, float c, float d, float e, float f, float g, float h, float i ){
+	Matrix3x3 M;
+	M.entries[0] = a; M.entries[3] = d; M.entries[6] = g;
+	M.entries[1] = b; M.entries[4] = e; M.entries[7] = h;
+	M.entries[2] = c; M.entries[5] = f; M.entries[8] = i;
+	return M;	
+}
+
+__device__ Matrix3x3 inverseMatrix( Matrix3x3 matrix ){
+	
+	float detMatrix = determinant3x3(matrix);
+    
+    
+    float a = matrix.entries[0];
+    float b = matrix.entries[1];
+    float c = matrix.entries[2];
+    float d = matrix.entries[3];
+    float e = matrix.entries[4];
+    float f = matrix.entries[5];
+    float g = matrix.entries[6];
+    float h = matrix.entries[7];
+    float i = matrix.entries[8];
+       
+
+    Matrix2x2 matrixA = valuesToMatrix2x2(e, f, h, i);
+    float deta = determinant2x2(matrixA);
+	
+	Matrix2x2 matrixB = valuesToMatrix2x2(d, f, g, i);
+    float detb = - determinant2x2(matrixB);
+    
+    Matrix2x2 matrixC = valuesToMatrix2x2(d, e, g, h);
+    float detc = determinant2x2(matrixC);
+    
+    Matrix2x2 matrixD = valuesToMatrix2x2(b, c, h, i);
+    float detd = -determinant2x2(matrixD);
+    
+    Matrix2x2 matrixE = valuesToMatrix2x2(a, c, g, i);
+    float dete = determinant2x2(matrixE);
+    
+    Matrix2x2 matrixF = valuesToMatrix2x2(a, b, g, h);
+    float detf = -determinant2x2(matrixF);
+    
+    Matrix2x2 matrixG = valuesToMatrix2x2(b, c, e, f);
+    float detg = determinant2x2(matrixG);
+    
+    Matrix2x2 matrixH = valuesToMatrix2x2(a, c, d, f);
+    float deth = -determinant2x2(matrixH);
+    
+    Matrix2x2 matrixI = valuesToMatrix2x2(a, b, d, e);
+    float deti = determinant2x2(matrixI);
+    
+    //Matrix3x3 adjA = valuesToMatrix3x3( deta, detb, detc,       detd, dete, detf  ,       detg, deth, deti);
+    Matrix3x3 adjA = valuesToMatrix3x3( deta, detd, detg, detb, dete, deth, detc, detf, deti);
+    
+	float factor = 1.0/detMatrix;
+    Matrix3x3 inverseA = factor*adjA;  
+
+	return inverseA;
+}
+
+
+__device__ float3 barycentricInterpolation( Ray* ray, float4 point){
+
+
+	float4 v0 = tex1Dfetch(texNode0, ray->frontid);
+	float4 v1 = tex1Dfetch(texNode1, ray->frontid);
+    float4 v2 = tex1Dfetch(texNode2, ray->frontid);
+    float4 v3 = tex1Dfetch(texNode3, ray->frontid);
+
+	float3 u = make_float3(v0 - v3);
+	float3 v = make_float3(v1 - v3);
+	float3 w = make_float3(v2 - v3);
+
+	float3 q = make_float3(point - v3);
+
+	Matrix3x3 M = vectorToMatrix3x3( u, v, w );
+	//Matrix3x3 M = valuesToMatrix3x3( u.x, v.x, w.x, u.y, v.y, w.y, u.z, v.z, w.z ); 
+	Matrix3x3 inverseM = inverseMatrix( M );
+
+	float3 result = inverseM*q;
+	
+	return ( result );
+}
+
 /**
 * Volumetric traverse the ray through the mesh
 */
@@ -1415,20 +1581,45 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
         float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
         float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
         float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
-        float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
-        float3 N = normalize(make_float3(gradient.x,gradient.y,gradient.z));
+        
+		// Arithmetic Mean
+		// float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
+		
+		//baricentric interpolation
+		float4 point = threadRay->eyepos + t*threadRay->dir; 
+
+		float3 result = barycentricInterpolation( threadRay, point);
+		
+		float3 gradient;
+		gradient.x = result.x*gradv0.x + result.y*gradv1.x + result.z*gradv2.x + (1.0 - (result.x + result.y + result.z))*gradv3.x;
+		gradient.y = result.x*gradv0.y + result.y*gradv1.y + result.z*gradv2.y + (1.0 - (result.x + result.y + result.z))*gradv3.y;
+		gradient.z = result.x*gradv0.z + result.y*gradv1.z + result.z*gradv2.z + (1.0 - (result.x + result.y + result.z))*gradv3.z;
+		
+		
+		float3 N;
+		if( (result.x + result.y + result.z ) <= (1+1e-6) ){
+			N = normalize(gradient);
+			//N = make_float3( (N.x +1.0)/2.0, (N.y +1.0)/2.0, (N.z +1.0)/2.0);
+		}
+		else{
+			N = make_float3( 0,0,0 );
+		}
+		
+		//float3 N = normalize(make_float3(gradient.x,gradient.y,gradient.z));
+		//N = make_float3( (N.x +1.0)/2.0, (N.y +1.0)/2.0, (N.z +1.0)/2.0);
+
 #else
         float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));
+		//N = make_float3( (N.x +1.0)/2.0, (N.y +1.0)/2.0, (N.z +1.0)/2.0);
 #endif
 
         float4 color = tex1D(texIsoColorScale, tetraBackScalar);
         float3 L = normalize(make_float3(- threadRay->t * threadRay->dir));
-        color.x *= abs(dot(N, L));
+
+		color.x *= abs(dot(N, L));
         color.y *= abs(dot(N, L));
         color.z *= abs(dot(N, L));
-
-        
-
+		
 #ifdef CUDARC_WHITE
         color.x = (1.0f - color.x) * (color.w);
         color.y = (1.0f - color.y) * (color.w);
