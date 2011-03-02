@@ -1337,7 +1337,7 @@ __device__ float3 barycentricInterpolation( Ray* ray, float4 point){
 /**
 * Volumetric traverse the ray through the mesh
 */
-__device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeboxmin, float3 probeboxmax){
+__device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeboxmin, float3 probeboxmax, float delta){
 
   float4 planeEq;
   float sameDirection;
@@ -1688,7 +1688,7 @@ extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput){
 /**
 * CUDA callback (device)
 */
-__global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3 probeboxmax, float4* dev_outputData){
+__global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3 probeboxmax, float4* dev_outputData, float delta){
 
   int x = blockIdx.x*blockDim.x + threadIdx.x;
   int y = blockIdx.y*blockDim.y + threadIdx.y;
@@ -1701,7 +1701,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3
   
 
   if(threadRay.frontid != 0)
-    Traverse(x, y, offset, &threadRay, probeboxmin, probeboxmax);
+    Traverse(x, y, offset, &threadRay, probeboxmin, probeboxmax, delta);
 
 
   dev_outputData[offset] = threadRay.acccolor;
@@ -1710,7 +1710,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3
 /**
 * CUDA callback (host)
 */
-extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect){
+extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect, float delta){
 
 #ifdef CUDARC_TIME
   cudaEvent_t start, stop;
@@ -1778,7 +1778,7 @@ extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPas
                           make_float4(p_eyePos[0], p_eyePos[1], p_eyePos[2], 1),
                           make_float3(probeboxmin[0], probeboxmin[1], probeboxmin[2]),
                           make_float3(probeboxmax[0], probeboxmax[1], probeboxmax[2]),
-                          dev_outputData);
+                          dev_outputData, delta);
 
 
   CUDA_SAFE_CALL(cudaGraphicsUnmapResources( 1, &cudaPboHandleOutput, NULL ) );

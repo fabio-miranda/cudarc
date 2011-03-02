@@ -7,7 +7,7 @@
 * t.cudarc.cpp: simple renderer that creates the CudaRC object and handles user interaction
 *
 * 
-* usage: %s modelpath [-propname] [-normalizefield] [-shaderpath] [-blocksize] [-maxpeel] [-tfpath] [-tfsize] [-winx] [-winy] [-scalez] [-transp] [-outputpath] [-benchmark] [-maxedge] [-interpol] [-tessellation]
+* usage: %s modelpath [-propfile] [-normalizefield] [-shaderpath] [-blocksize] [-maxpeel] [-tfpath] [-tfsize] [-winx] [-winy] [-scalez] [-transp] [-outputpath] [-benchmark] [-maxedge] [-interpol] [-tessellation]
 * default values:
 * modelpath: (non-optional)
 * shaderpath: ../../../src/cudarc/glsl/
@@ -100,6 +100,7 @@ int currentInterpolType = 1;
 int currentNumSteps = 10;
 int currentNumTraverses = 0;
 int currentNumPeeling = 0;
+float currentDelta = 0.0f;
 
 //Command line arguments
 static float s_scalez = 1.0f;
@@ -176,22 +177,22 @@ static void redraw(void* data){
 #ifndef CUDARC_HARC
   if(s_bdryonly){
     if(currentGeoType == Fem){
-      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug);
+      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
       glPopMatrix();
     }
     if(currentGeoType == Res){
-      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug);
+      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
       glPopMatrix();
     }
   }
   else{
     if(currentGeoType == Fem){
-      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug);
+      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
       glPopMatrix();
       glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, s_femCudaRC->GetPboOutputId());
     }
     if(currentGeoType == Res){
-      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug);
+      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
       glPopMatrix();
       glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, s_resCudaRC->GetPboOutputId());
     }
@@ -350,12 +351,19 @@ static void keyboard(int k, int st, float x, float y, void *data){
     s_probebox = !s_probebox;
     printf("Probebox: %d\n", s_probebox);
     if(currentGeoType == Fem){
+      float xmin, xmax, ymin, ymax, zmin, zmax;
+      s_camera->GetBox(&xmin, &xmax, &ymin, &ymax, &zmin, &zmax);
+
       s_femCudaRC->SetProbeBoxEnabled(s_probebox);
-      s_femCudaRC->SetProbeBox(0.3, 0.7, 0.3, 0.7, 0.3, 0.7);
+      s_femCudaRC->SetProbeBox(xmin + 0.3 * (xmax - xmin), xmax - 0.3 * (xmax - xmin),
+                               ymin + 0.3 * (ymax - ymin), ymax - 0.3 * (ymax - ymin),
+                               zmin + 0.3 * (zmax - zmin), zmax - 0.3 * (zmax - zmin));
+      //s_femCudaRC->SetProbeBox(-100, 100, -100, 100, -100, 100);
     }
     if(currentGeoType == Res){
       s_resCudaRC->SetProbeBoxEnabled(s_probebox);
       s_resCudaRC->SetProbeBox(0.3, 0.7, 0.3, 0.7, 0.3, 0.7);
+      //s_resCudaRC->SetProbeBox(-100, 100, -100, 100, -100, 100);
     }
     break;
 
@@ -450,6 +458,18 @@ static void keyboard(int k, int st, float x, float y, void *data){
       currentNumPeeling--;
       printf("Current peeling: %d\n", currentNumPeeling);
     }
+    break;
+
+  case 'y':
+    if(currentDelta > 0){
+      currentDelta-=0.05f;;
+      printf("Current delta: %f\n", currentDelta);
+    }
+    break;
+
+  case 'u':
+    currentDelta+=0.05f;;
+    printf("Current delta: %f\n", currentDelta);
     break;
 
   case '-':
