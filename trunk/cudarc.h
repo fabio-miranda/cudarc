@@ -173,7 +173,7 @@ public:
   /**
   * Render callback
   */
-  void Render(bool bdryonly, float* eyePos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug);
+  void Render(bool bdryonly, float* eyePos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug, float delta);
 
   /**
   * Returns the output of the CUDA computation

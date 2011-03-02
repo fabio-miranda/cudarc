@@ -40,7 +40,7 @@
 #include <stdlib.h>
 
 
-extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect);
+extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect, float delta);
 extern "C" void deleteGPUTextures();
 extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput);
 extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey, bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps, int p_numtraverses, int p_numelem, bool p_isosurface, bool p_volumetric, bool p_probebox);
@@ -1319,7 +1319,7 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug){
+void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug, float delta){
 
   
   Update();
@@ -1395,9 +1395,9 @@ void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, flo
     //CUDA
     if(bdryonly == false){
       if(m_numpeeling == 0)
-        run(&kernelCallTime, &overheadTime, i, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
+        run(&kernelCallTime, &overheadTime, i, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId(), delta);
       else if(m_numpeeling == i)
-        run(&kernelCallTime, &overheadTime, 0, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
+        run(&kernelCallTime, &overheadTime, 0, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId(), delta);
     }
 
     //Swap
