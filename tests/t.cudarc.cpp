@@ -461,10 +461,10 @@ static void keyboard(int k, int st, float x, float y, void *data){
     break;
 
   case 'y':
-    if(currentDelta > 0){
+   // if(currentDelta > 0){
       currentDelta-=0.05f;;
       printf("Current delta: %f\n", currentDelta);
-    }
+    //}
     break;
 
   case 'u':
