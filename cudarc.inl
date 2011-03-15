@@ -992,18 +992,6 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
 		}
   }
 
-
-
-  /*for(int ti=0; ti<m_memoryInfo.numElem; ti++){
-    for(int ni=0; ni<4; ni++){
-      float* pos = set->GetPosition(ti, ni);
-      collisionData[ni][4 * (ti+1) + 0] = pos[0];
-      collisionData[ni][4 * (ti+1) + 1] = pos[1];
-      collisionData[ni][4 * (ti+1) + 2] = pos[2];
-      collisionData[ni][4 * (ti+1) + 3] = 1;
-    }
-  }*/
-
 #ifdef CUDARC_VERBOSE
   printf("Done.\n");
 #endif
@@ -1051,7 +1039,7 @@ void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** a
   for(int fi=0; fi<numFaces; fi++){
     for(int ti=0; ti<m_memoryInfo.numElem; ti++){
       int posindices[3] = {-1, -1, -1};
-      int adjid = set->GetAdj(ti, fi); // 1-indexed
+       int adjid = set->GetAdj(ti, fi); // 1-indexed
       float* adjpos[4];
       float* tpos[4];
       int adjfaceid = 0;
