@@ -1355,6 +1355,69 @@ __device__ float3 barycentricInterpolation( float4 point, float id){
 	return ( result );
 }
 
+
+__device__ float computeDelta( Ray* ray, float4 point)
+{
+	float4 v0 = tex1Dfetch(texNode0, ray->frontid);
+	float4 v1 = tex1Dfetch(texNode1, ray->frontid);
+	float4 v2 = tex1Dfetch(texNode2, ray->frontid);
+	float4 v3 = tex1Dfetch(texNode3, ray->frontid);
+
+	//Distance to first tetrahedron face
+	float3 u = make_float3(v3 - v1);
+	float3 v = make_float3(v2 - v1);
+	float3 w = make_float3(point - v1);
+	float3 normal = normalize(cross( u, v ));
+	float3 e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
+	float3 e2 = normalize(cross( normal, e1 ));
+	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
+
+	float delta1 = length( u - w );
+
+	//Distance to second tetrahedron face
+	u = make_float3(v3 - v2);
+	v = make_float3(v0 - v2);
+	w = make_float3(point - v2);
+	normal = normalize(cross( u, v ));
+	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
+	e2 = normalize(cross( normal, e1 ));
+	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
+
+	float delta2 = length( u - w );
+
+	//Distance to third tetrahedron face
+	u = make_float3(v3 - v0);
+	v = make_float3(v1 - v0);
+	w = make_float3(point - v1);
+	normal = normalize(cross( u, v ));
+	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
+	e2 = normalize(cross( normal, e1 ));
+	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
+
+
+	float delta3 = length( u - w );
+
+	//Distance to forth tetrahedron face
+	u = make_float3(v2 - v1);
+	v = make_float3(v0 - v1);
+	w = make_float3(point - v1);
+	normal = normalize(cross( u, v ));
+	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
+	e2 = normalize(cross( normal, e1 ));
+	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
+
+	float delta4 = length( u - w );
+
+	if( delta1 < delta2 && delta1 < delta3 && delta1 < delta4 )
+		return delta1;
+	if( delta2 < delta1 && delta2 < delta3 && delta2 < delta4 )
+		return delta2;
+	if( delta3 < delta2 && delta3 < delta1 && delta3 < delta4 )
+		return delta3;
+	if( delta4 < delta2 && delta4 < delta3 && delta4 < delta1 )
+		return delta1;
+}
+
 __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 {
 	// When there is not adjacent tetrahedron 
@@ -1380,7 +1443,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	Matrix3x3 M = vectorToMatrix3x3( u, v, w );
 	float volume = determinant3x3( M );	
-	if( volume < 0 )
+	if( volume < -1e-6  )
 	{
 		idPrevious = id;
 		id = idAdj.x;
@@ -1394,7 +1457,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < 0 )
+	if( volume < -1e-6 )
 	{
 		idPrevious = id;
 		id = idAdj.y;
@@ -1408,7 +1471,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < 0 )
+	if( volume < -1e-6 )
 	{
 		idPrevious = id;
 		id = idAdj.z;
@@ -1422,7 +1485,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < 0 )
+	if( volume < -1e-6 )
 	{
 		idPrevious = id;
 		id = idAdj.w;
@@ -1480,7 +1543,6 @@ __device__ float3 gradientIlumination( Ray* ray, float4 point , float DELTA, flo
 	f.z = (abs(dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
 		- abs(dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
 		)/(2.0*DELTA);
-
 
 	float3 normal = Normal( ray, point ); // Projection to come back to surface
 	f = f - dot( f, normal )*normal;
@@ -1552,7 +1614,6 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 			}
 		}
 		else{
-
 
 
 			float diffcpfront = 3.0f;
@@ -1633,6 +1694,9 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 
 				float4 point = threadRay->eyepos + t*threadRay->dir; 
 
+				//float DELTA = 0.5*computeDelta( threadRay, point);
+
+
 				// Ilumination calculus
 				float3 lightPos = make_float3( threadRay->eyepos );
 				float3 gradF = gradientIlumination( threadRay, point, delta, lightPos );
@@ -1644,21 +1708,30 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 #endif
 
 
-				float3 N = Normal( threadRay, point + make_float4( delta, 0,0,0) );
+				float3 N = Normal( threadRay, point );
 				float4 color = tex1D(texIsoColorScale, tetraBackScalar);
 				float3 L = normalize(make_float3(- threadRay->t * threadRay->dir));
 
-				//color.x *= abs(dot(N, L));
-				//color.y *= abs(dot(N, L));
-				//color.z *= abs(dot(N, L));
+				//contours
+				/*if( abs(dot(N,L)) <= 0.15 )
+				{
+					color.x = 0.0;
+					color.y = 0.0;
+					color.z = 0.0;	
+				
+				}*/
+
+				color.x *= abs(dot(N, L));
+				color.y *= abs(dot(N, L));
+				color.z *= abs(dot(N, L));
 
 				//color.x = gradF.x;
 				//color.y = gradF.y;
 				//color.z = gradF.z;
 
-				color.x = length(gradF);
-				color.y = length(gradF);
-				color.z = length(gradF);
+				//color.x = length(gradF);
+				//color.y = length(gradF);
+				//color.z = length(gradF);
 
 				//color.x = derivative;
 				//color.y = derivative;
@@ -1673,12 +1746,13 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				color.z = normal.z;*/
 
 
-	/*			if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && (( length( gradF ) - length( gradFNext ))>1e-3) && (( length( gradF ) - length( gradFPrevious ))>1e-3))
+				if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && (( length( gradF ) - length( gradFNext ))>1e-2) && (( length( gradF ) - length( gradFPrevious ))>1e-2))
 				{
 					color.x = 0.0;
 					color.y = 0.0;
-					color.z = 0.0;			
-				}*/
+					color.z = 0.0;	
+					color.w = 1.0;
+				}
 
 #ifdef CUDARC_WHITE
 				color.x = (1.0f - color.x) * (color.w);
