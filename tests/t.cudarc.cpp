@@ -101,6 +101,8 @@ int currentNumSteps = 10;
 int currentNumTraverses = 0;
 int currentNumPeeling = 0;
 float currentDelta = 0.0f;
+float currentDeltaW = 0.0f;
+float currentZero = 0.0f;
 
 //Command line arguments
 static float s_scalez = 1.0f;
@@ -177,22 +179,22 @@ static void redraw(void* data){
 #ifndef CUDARC_HARC
   if(s_bdryonly){
     if(currentGeoType == Fem){
-      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
+      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta, currentDeltaW, currentZero);
       glPopMatrix();
     }
     if(currentGeoType == Res){
-      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
+      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta, currentDeltaW, currentZero);
       glPopMatrix();
     }
   }
   else{
     if(currentGeoType == Fem){
-      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
+      s_femCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta, currentDeltaW, currentZero);
       glPopMatrix();
       glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, s_femCudaRC->GetPboOutputId());
     }
     if(currentGeoType == Res){
-      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta);
+      s_resCudaRC->Render(s_bdryonly, s_eyePos, s_eyeDir, s_eyeUp, s_eyeZNear, s_eyeFov, s_debug, currentDelta, currentDeltaW, currentZero);
       glPopMatrix();
       glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, s_resCudaRC->GetPboOutputId());
     }
@@ -462,15 +464,41 @@ static void keyboard(int k, int st, float x, float y, void *data){
 
   case 'y':
    // if(currentDelta > 0){
-      currentDelta-=0.05f;
+      currentDelta-=0.0005;
       printf("Current delta: %f\n", currentDelta);
     //}
     break;
 
   case 'u':
-    currentDelta+=0.05f;;
+    currentDelta+=0.0005;
     printf("Current delta: %f\n", currentDelta);
     break;
+
+  case 'f':
+   // if(currentDelta > 0){
+      currentDeltaW-=5;
+      printf("Current deltaW: %f\n", currentDeltaW);
+    //}
+    break;
+
+  case 'g':
+    currentDeltaW+=5;
+    printf("Current deltaW: %f\n", currentDeltaW);
+    break;
+
+
+  case 'l':
+    currentZero+=0.002f;
+    printf("Current zero: %f\n", currentZero);
+    break;
+
+  case 'k':
+   // if(currentDelta > 0){
+      currentZero-=0.002f;
+      printf("Current zero: %f\n", currentZero);
+    //}
+    break;
+
 
   case '-':
     if(currentNumSteps > 1){
@@ -759,7 +787,7 @@ void InitRes(const char* fullPath){
   ResModel* resmodel = resmodelnew->GetModel();
   s_resGeometry = resmodel->GetGeometry();
   s_resproperty = resmodel->GetProperty("SO");
-  s_resproperty->SetStep(resmodel->GetStep(0));
+  s_resproperty->SetStep(resmodel->GetStep(0));  
   //TODO: Discrete?
   s_resproperty->SetDiscrete();
 

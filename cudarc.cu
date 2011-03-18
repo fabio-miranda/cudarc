@@ -1368,53 +1368,37 @@ __device__ float computeDelta( Ray* ray, float4 point)
 	float3 v = make_float3(v2 - v1);
 	float3 w = make_float3(point - v1);
 	float3 normal = normalize(cross( u, v ));
-	float3 e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
-	float3 e2 = normalize(cross( normal, e1 ));
-	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
-
-	float delta1 = length( u - w );
+	float delta1 = abs(dot( w, normal ));
 
 	//Distance to second tetrahedron face
 	u = make_float3(v3 - v2);
 	v = make_float3(v0 - v2);
 	w = make_float3(point - v2);
 	normal = normalize(cross( u, v ));
-	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
-	e2 = normalize(cross( normal, e1 ));
-	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
-
-	float delta2 = length( u - w );
+	float delta2 = abs(dot( w, normal ));
 
 	//Distance to third tetrahedron face
 	u = make_float3(v3 - v0);
 	v = make_float3(v1 - v0);
-	w = make_float3(point - v1);
+	w = make_float3(point - v0);
 	normal = normalize(cross( u, v ));
-	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
-	e2 = normalize(cross( normal, e1 ));
-	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
-
-
-	float delta3 = length( u - w );
+	float delta3 = abs(dot( w, normal ));
 
 	//Distance to forth tetrahedron face
 	u = make_float3(v2 - v1);
 	v = make_float3(v0 - v1);
 	w = make_float3(point - v1);
 	normal = normalize(cross( u, v ));
-	e1 = normalize(cross( normal, make_float3(normal.x,0,0)));
-	e2 = normalize(cross( normal, e1 ));
-	w = dot( w, e1)*e1 + dot( w, e2 )*e2;
+	float delta4= abs(dot( w, normal ));
 
-	float delta4 = length( u - w );
 
-	if( delta1 < delta2 && delta1 < delta3 && delta1 < delta4 )
+	if( delta1 <= delta2 && delta1 <= delta3 && delta1 <= delta4 )
 		return delta1;
-	if( delta2 < delta1 && delta2 < delta3 && delta2 < delta4 )
+	if( delta2 <= delta1 && delta2 <= delta3 && delta2 <= delta4 )
 		return delta2;
-	if( delta3 < delta2 && delta3 < delta1 && delta3 < delta4 )
+	if( delta3 <= delta2 && delta3 <= delta1 && delta3 <= delta4 )
 		return delta3;
-	if( delta4 < delta2 && delta4 < delta3 && delta4 < delta1 )
+	if( delta4 <= delta2 && delta4 <= delta3 && delta4 <= delta1 )
 		return delta1;
 }
 
@@ -1426,6 +1410,8 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 		id = idPrevious;
 		return true;		
 	}
+
+	float precision = -1e-3;
 
 	float4 v0 = tex1Dfetch(texNode0, id);
 	float4 v1 = tex1Dfetch(texNode1, id);
@@ -1443,7 +1429,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	Matrix3x3 M = vectorToMatrix3x3( u, v, w );
 	float volume = determinant3x3( M );	
-	if( volume < -1e-6  )
+	if( volume < precision  )
 	{
 		idPrevious = id;
 		id = idAdj.x;
@@ -1457,7 +1443,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < -1e-6 )
+	if( volume < precision )
 	{
 		idPrevious = id;
 		id = idAdj.y;
@@ -1471,7 +1457,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < -1e-6 )
+	if( volume < precision )
 	{
 		idPrevious = id;
 		id = idAdj.z;
@@ -1485,7 +1471,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
-	if( volume < -1e-6 )
+	if( volume < precision )
 	{
 		idPrevious = id;
 		id = idAdj.w;
@@ -1532,17 +1518,29 @@ __device__ float3 gradientIlumination( Ray* ray, float4 point , float DELTA, flo
 
 	float3 f;
 
-	f.x = (abs(dot( Normal( ray, point + make_float4(DELTA,0,0,0)), Light( lightPos, point + make_float4(DELTA,0,0,0))))
-		- abs(dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0))))
+	f.x = ((dot( Normal( ray, point + make_float4(DELTA,0,0,0)), Light( lightPos, point + make_float4(DELTA,0,0,0))))
+		- (dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0))))
 		)/(2.0*DELTA);
 
-	f.y = (abs(dot( Normal( ray, point + make_float4(0,DELTA,0,0)), Light( lightPos, point + make_float4(0,DELTA,0,0))))
-		- abs(dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0))))
+	f.y = ((dot( Normal( ray, point + make_float4(0,DELTA,0,0)), Light( lightPos, point + make_float4(0,DELTA,0,0))))
+		- (dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0))))
 		)/(2.0*DELTA);
 
-	f.z = (abs(dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
-		- abs(dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
+	f.z = ((dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
+		- (dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
 		)/(2.0*DELTA);
+
+	//f.x = abs((dot( Normal( ray, point + make_float4(DELTA,0,0,0)), Light( lightPos, point + make_float4(DELTA,0,0,0))))
+	//	- abs(dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0))))
+	//	)/(2.0*DELTA);
+
+	//f.y = abs((dot( Normal( ray, point + make_float4(0,DELTA,0,0)), Light( lightPos, point + make_float4(0,DELTA,0,0))))
+	//	- abs(dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0))))
+	//	)/(2.0*DELTA);
+
+	//f.z = abs((dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
+	//	- abs(dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
+	//	)/(2.0*DELTA);
 
 	float3 normal = Normal( ray, point ); // Projection to come back to surface
 	f = f - dot( f, normal )*normal;
@@ -1553,7 +1551,7 @@ __device__ float3 gradientIlumination( Ray* ray, float4 point , float DELTA, flo
 /**
 * Volumetric traverse the ray through the mesh
 */
-__device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeboxmin, float3 probeboxmax, float delta){
+__device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeboxmin, float3 probeboxmax, float delta, float deltaW, float zero){
 
 	float4 planeEq;
 	float sameDirection;
@@ -1694,15 +1692,14 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 
 				float4 point = threadRay->eyepos + t*threadRay->dir; 
 
-				//float DELTA = 0.5*computeDelta( threadRay, point);
-
-
 				// Ilumination calculus
 				float3 lightPos = make_float3( threadRay->eyepos );
 				float3 gradF = gradientIlumination( threadRay, point, delta, lightPos );
 				float3 wDirection = normalize( gradF );
 				float3 gradFNext= gradientIlumination( threadRay, (point + delta*make_float4(wDirection)), delta, lightPos );
-				float3 gradFPrevious = gradientIlumination( threadRay, (point - delta*make_float4(wDirection)), delta, lightPos );
+				float3 gradFPrevious = gradientIlumination( threadRay, (point - delta*make_float4(wDirection)),delta, lightPos );
+
+				//float secondDerivative = (length(gradFNext) - 2.0*length(gradF) + length(gradFPrevious))/delta*delta;
 #else
 				float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));		
 #endif
@@ -1721,13 +1718,13 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				
 				}*/
 
-				color.x *= abs(dot(N, L));
-				color.y *= abs(dot(N, L));
-				color.z *= abs(dot(N, L));
+				//color.x *= abs(dot(N, L));
+				//color.y *= abs(dot(N, L));
+				//color.z *= abs(dot(N, L));
 
-				//color.x = gradF.x;
-				//color.y = gradF.y;
-				//color.z = gradF.z;
+				//color.x = DELTA/1000;
+				//color.y = DELTA/1000;
+				//color.z = DELTA/1000;
 
 				//color.x = length(gradF);
 				//color.y = length(gradF);
@@ -1746,12 +1743,16 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				color.z = normal.z;*/
 
 
-				if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && (( length( gradF ) - length( gradFNext ))>1e-2) && (( length( gradF ) - length( gradFPrevious ))>1e-2))
+				if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && abs(( length( gradF ) 
+					- length( gradFNext )))>zero && abs(( length( gradF ) - length( gradFPrevious )))>zero )
 				{
 					color.x = 0.0;
 					color.y = 0.0;
 					color.z = 0.0;	
-					color.w = 1.0;
+					if( deltaW > 0 )
+						color.w = 1.0;
+					else
+						color.w = 0.0;
 				}
 
 #ifdef CUDARC_WHITE
@@ -1822,7 +1823,7 @@ extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput){
 /**
 * CUDA callback (device)
 */
-__global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3 probeboxmax, float4* dev_outputData, float delta){
+__global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3 probeboxmax, float4* dev_outputData, float delta, float deltaW, float zero){
 
 	int x = blockIdx.x*blockDim.x + threadIdx.x;
 	int y = blockIdx.y*blockDim.y + threadIdx.y;
@@ -1835,7 +1836,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3
 
 
 	if(threadRay.frontid != 0)
-		Traverse(x, y, offset, &threadRay, probeboxmin, probeboxmax, delta);
+		Traverse(x, y, offset, &threadRay, probeboxmin, probeboxmax, delta, deltaW, zero);
 
 
 	dev_outputData[offset] = threadRay.acccolor;
@@ -1844,7 +1845,7 @@ __global__ void Run(int depthPeelPass, float4 eyePos, float3 probeboxmin, float3
 /**
 * CUDA callback (host)
 */
-extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect, float delta){
+extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect, float delta, float deltaW, float zero){
 
 #ifdef CUDARC_TIME
 	cudaEvent_t start, stop;
@@ -1912,7 +1913,7 @@ extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPas
 		make_float4(p_eyePos[0], p_eyePos[1], p_eyePos[2], 1),
 		make_float3(probeboxmin[0], probeboxmin[1], probeboxmin[2]),
 		make_float3(probeboxmax[0], probeboxmax[1], probeboxmax[2]),
-		dev_outputData, delta);
+		dev_outputData, delta, deltaW, zero);
 
 
 	CUDA_SAFE_CALL(cudaGraphicsUnmapResources( 1, &cudaPboHandleOutput, NULL ) );
