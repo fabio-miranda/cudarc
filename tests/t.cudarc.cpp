@@ -56,6 +56,7 @@
 #include <topsview/geometry/restetrageometry3.h>
 #include <topsview/geometry/femtetrageometry3.h>
 #include <topsview/geometry/quadset.h>
+#include <tops/multimodel.h>
 #include <ugl/uglim.h>
 
 #include <cudarc.h>
@@ -103,6 +104,7 @@ int currentNumPeeling = 0;
 float currentDelta = 0.0f;
 float currentDeltaW = 0.0f;
 float currentZero = 0.0f;
+float baseDelta = 0.0f;
 
 //Command line arguments
 static float s_scalez = 1.0f;
@@ -463,40 +465,44 @@ static void keyboard(int k, int st, float x, float y, void *data){
     break;
 
   case 'y':
-   // if(currentDelta > 0){
-      currentDelta-=0.0005;
+#ifdef CUDARC_RESER
+	baseDelta = s_resCudaRC->getDelta();	
+#else
+    baseDelta = s_femCudaRC->getDelta();
+#endif
+      currentDelta-=baseDelta;
       printf("Current delta: %f\n", currentDelta);
-    //}
     break;
 
   case 'u':
-    currentDelta+=0.0005;
+#ifdef CUDARC_RESER
+	baseDelta = s_resCudaRC->getDelta();	
+#else
+    baseDelta = s_femCudaRC->getDelta();
+#endif
+    currentDelta+=baseDelta;
     printf("Current delta: %f\n", currentDelta);
     break;
 
   case 'f':
-   // if(currentDelta > 0){
-      currentDeltaW-=5;
+      currentDeltaW-=1;
       printf("Current deltaW: %f\n", currentDeltaW);
-    //}
     break;
 
   case 'g':
-    currentDeltaW+=5;
+    currentDeltaW+=1;
     printf("Current deltaW: %f\n", currentDeltaW);
     break;
 
 
   case 'l':
-    currentZero+=0.002f;
+    currentZero+=0.00005f;
     printf("Current zero: %f\n", currentZero);
     break;
 
   case 'k':
-   // if(currentDelta > 0){
-      currentZero-=0.002f;
+      currentZero-=0.00005f;
       printf("Current zero: %f\n", currentZero);
-    //}
     break;
 
 
@@ -787,13 +793,31 @@ void InitRes(const char* fullPath){
   ResModel* resmodel = resmodelnew->GetModel();
   s_resGeometry = resmodel->GetGeometry();
   s_resproperty = resmodel->GetProperty("SO");
-  s_resproperty->SetStep(resmodel->GetStep(0));  
-  //TODO: Discrete?
-  s_resproperty->SetDiscrete();
+  s_resproperty->SetStep(resmodel->GetStep(20));  
+
+#ifdef CUDARC_RESER
+  TopMultiModel *multiModel = s_resGeometry->GetModel();
+  TopModel *model = multiModel->GetModel(0);
+  float scale = 8.0;
+
+  for (TopModel::NodeItr itr(model); itr.IsValid(); itr.Next()) {
+	 TopNode node = itr.GetCurr();
+	 float x, y, z;
+	 model->GetPosition(node, &x, &y, &z);	
+	 model->SetPosition(node, x, y, scale*z);
+  }
+
+  double xmin,xmax,ymin,ymax,zmin,zmax;
+  TopUtil::ComputeBoundingBox(model, &xmin, &xmax, &ymin, &ymax, &zmin, &zmax);
+  s_bbMin.x = xmin; s_bbMin.y = ymin; s_bbMin.z = zmin;
+  s_bbMax.x = xmax; s_bbMax.y = ymax; s_bbMax.z = zmax;
+
+#else
 
   s_bbMax.x = s_resGeometry->ActXmax(); s_bbMax.y = s_resGeometry->ActYmax(); s_bbMax.z = s_resGeometry->ActZmax(); 
   s_bbMin.x = s_resGeometry->ActXmin(); s_bbMin.y = s_resGeometry->ActYmin(); s_bbMin.z = s_resGeometry->ActZmin(); 
 
+#endif
   //Tpv
   s_tpvResTetraGeometry = new TpvResTetraGeometry3();
   s_tpvResTetraGeometry->SetModel(s_resGeometry->GetModel());
@@ -802,6 +826,24 @@ void InitRes(const char* fullPath){
 
   s_topmultimodel = s_resGeometry->GetModel();
   s_tpvproperty = CreateTpvPropertyFromResProperty(s_topmultimodel, s_resproperty);
+
+   //_camera->SetAutoFit(true);
+  //s_camera->SetBox(s_bbMin.x, s_bbMax.x,
+  //s_bbMin.y, s_bbMax.y,
+  //s_bbMin.z, s_bbMax.z);
+
+  //TopMultiModel *multiModel = s_resGeometry->GetModel();
+  //TopModel *model = s_topmultimodel->GetModel(0);
+
+  ////float scale = 8.0;
+
+  //for (TopModel::NodeItr itr(model); itr.IsValid(); itr.Next()) {
+	 //TopNode node = itr.GetCurr();
+	 //float x, y, z;
+	 //model->GetPosition(node, &x, &y, &z);
+	 //z*=1.3;
+	 //model->SetPosition(node, x, y, z);
+  //}
 
 #ifdef CUDARC_VERBOSE
   printf("Done.\n");
@@ -946,7 +988,7 @@ int main(int argc, char **argv){
     s_resCudaRC->SetMaxNumPeel(s_maxpeel);
     s_resCudaRC->SetTessellation(s_tessellation);
     s_resCudaRC->SetNormalizedField(s_normalizefield);
-    s_resCudaRC->SetPaths(s_zetapsigammasize, s_zetapsigammapath, s_shaderpath);
+    s_resCudaRC->SetPaths(s_zetapsigammasize, s_zetapsigammapath, s_shaderpath);	
     InitGL(argc, argv);
   }
   if(strcmp(fileExtension, ".ele") == 0 || strcmp(fileExtension, ".node") == 0){
@@ -1045,6 +1087,7 @@ int main(int argc, char **argv){
     _mkdir(s_outputpath);
 
     s_outputpathsize = strlen(s_outputpath);
+
 
 /*
 #ifdef _DEBUG
