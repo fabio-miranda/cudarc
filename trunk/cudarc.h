@@ -192,6 +192,11 @@ public:
   */
   void SetExplosionFactor(float explosionfactor);
 
+    /**
+  * Set explosion factor of the model, for exploded view
+  */
+  float getDelta();
+
   Time m_time;
 
 private:
@@ -295,6 +300,8 @@ private:
   bool m_update_zetapsigamma;
   bool m_update_memoryinfo;
   bool m_update_maxnumpeel;
+
+  float smallDelta;
 
   MemoryInfo m_memoryInfo;
 };

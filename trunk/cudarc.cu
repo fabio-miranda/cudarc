@@ -1232,8 +1232,17 @@ __device__ Matrix3x3 vectorToMatrix3x3( float3 u, float3 v, float3 w ){
 	return M;
 }
 
+__device__ Matrix3x3 vectorToMatrix3x31( float3 u, float3 v, float3 w ){
+	Matrix3x3 M;
+	M.entries[0] = u.x; M.entries[3] = u.y; M.entries[6] = u.z;
+	M.entries[1] = v.x; M.entries[4] = v.y; M.entries[7] = v.z;
+	M.entries[2] = w.x; M.entries[5] = w.y; M.entries[8] = w.z;
+
+	return M;
+}
+
 __device__ float determinant3x3( Matrix3x3 matrix ){
-	return 	(-matrix.entries[6]*matrix.entries[4]*matrix.entries[2] - matrix.entries[7]*matrix.entries[5]*matrix.entries[0] - matrix.entries[8]*matrix.entries[3]*matrix.entries[1]
+	return 	(- matrix.entries[6]*matrix.entries[4]*matrix.entries[2] - matrix.entries[7]*matrix.entries[5]*matrix.entries[0] - matrix.entries[8]*matrix.entries[3]*matrix.entries[1]
 	+ matrix.entries[0]*matrix.entries[4]*matrix.entries[8] + matrix.entries[1]*matrix.entries[5]*matrix.entries[6] + matrix.entries[2]*matrix.entries[3]*matrix.entries[7]);
 }
 
@@ -1251,6 +1260,14 @@ __device__ Matrix2x2 valuesToMatrix2x2( float a, float b, float c, float d ){
 }
 
 __device__ Matrix3x3 valuesToMatrix3x3( float a, float b, float c, float d, float e, float f, float g, float h, float i ){
+	Matrix3x3 M;
+	M.entries[0] = a; M.entries[3] = d; M.entries[6] = g;
+	M.entries[1] = b; M.entries[4] = e; M.entries[7] = h;
+	M.entries[2] = c; M.entries[5] = f; M.entries[8] = i;
+	return M;	
+}
+
+__device__ Matrix3x3 valuesToMatrix3x3Line( float a, float b, float c, float d, float e, float f, float g, float h, float i ){
 	Matrix3x3 M;
 	M.entries[0] = a; M.entries[3] = d; M.entries[6] = g;
 	M.entries[1] = b; M.entries[4] = e; M.entries[7] = h;
@@ -1356,81 +1373,48 @@ __device__ float3 barycentricInterpolation( float4 point, float id){
 }
 
 
-__device__ float computeDelta( Ray* ray, float4 point)
-{
-	float4 v0 = tex1Dfetch(texNode0, ray->frontid);
-	float4 v1 = tex1Dfetch(texNode1, ray->frontid);
-	float4 v2 = tex1Dfetch(texNode2, ray->frontid);
-	float4 v3 = tex1Dfetch(texNode3, ray->frontid);
-
-	//Distance to first tetrahedron face
-	float3 u = make_float3(v3 - v1);
-	float3 v = make_float3(v2 - v1);
-	float3 w = make_float3(point - v1);
-	float3 normal = normalize(cross( u, v ));
-	float delta1 = abs(dot( w, normal ));
-
-	//Distance to second tetrahedron face
-	u = make_float3(v3 - v2);
-	v = make_float3(v0 - v2);
-	w = make_float3(point - v2);
-	normal = normalize(cross( u, v ));
-	float delta2 = abs(dot( w, normal ));
-
-	//Distance to third tetrahedron face
-	u = make_float3(v3 - v0);
-	v = make_float3(v1 - v0);
-	w = make_float3(point - v0);
-	normal = normalize(cross( u, v ));
-	float delta3 = abs(dot( w, normal ));
-
-	//Distance to forth tetrahedron face
-	u = make_float3(v2 - v1);
-	v = make_float3(v0 - v1);
-	w = make_float3(point - v1);
-	normal = normalize(cross( u, v ));
-	float delta4= abs(dot( w, normal ));
-
-
-	if( delta1 <= delta2 && delta1 <= delta3 && delta1 <= delta4 )
-		return delta1;
-	if( delta2 <= delta1 && delta2 <= delta3 && delta2 <= delta4 )
-		return delta2;
-	if( delta3 <= delta2 && delta3 <= delta1 && delta3 <= delta4 )
-		return delta3;
-	if( delta4 <= delta2 && delta4 <= delta3 && delta4 <= delta1 )
-		return delta1;
-}
-
-__device__ bool isPointInside( float4 point, int &idPrevious, int &id )
+__device__ bool isPointInside( float4 point, int &idPrevious, int &id , int &count)
 {
 	// When there is not adjacent tetrahedron 
-	if( id == 0 )
+	if( id == 0 || idPrevious == 0)
 	{
-		id = idPrevious;
+		//return previous tetrahedron id
+		id = idPrevious; 
 		return true;		
 	}
+	
+	if( count == 10 )
+		return true;
+	else
+		count++;
+	//if( id == idPrevious )
+	//{
+	//	return true;
+	//}
 
-	float precision = -1e-3;
+	float precision =  0.0;
 
 	float4 v0 = tex1Dfetch(texNode0, id);
 	float4 v1 = tex1Dfetch(texNode1, id);
 	float4 v2 = tex1Dfetch(texNode2, id);
 	float4 v3 = tex1Dfetch(texNode3, id);
 
-	//return adjacent tetrahedral
+	//return adjacent tetrahedron
 	float4 idAdj = tex1Dfetch(texAdj0, id);
-	idAdj = idAdj/4.0;
+	idAdj = idAdj/4.0f;
 
-	////To the first face ( 1, 2, 3 )	
+	//To the first face ( 1, 2, 3 )	
 	float3 u = make_float3(v3 - v1);
 	float3 v = make_float3(v2 - v1);	
 	float3 w = make_float3(point - v1);
 
 	Matrix3x3 M = vectorToMatrix3x3( u, v, w );
-	float volume = determinant3x3( M );	
+
+	float volume = determinant3x3( M );		
+
 	if( volume < precision  )
 	{
+
 		idPrevious = id;
 		id = idAdj.x;
 		return false;
@@ -1443,6 +1427,7 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
+
 	if( volume < precision )
 	{
 		idPrevious = id;
@@ -1451,14 +1436,16 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 	}
 
 	//To the third face( 3, 0, 1 )
-	u = make_float3(v3 - v0);
-	v = make_float3(v1 - v0);	
-	w = make_float3(point - v0);
+	u = make_float3(v1 - v3);	
+	v = make_float3(v0 - v3);
+	w = make_float3(point - v3);
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
+
 	if( volume < precision )
 	{
+
 		idPrevious = id;
 		id = idAdj.z;
 		return false;
@@ -1471,14 +1458,14 @@ __device__ bool isPointInside( float4 point, int &idPrevious, int &id )
 
 	M = vectorToMatrix3x3( u, v, w );
 	volume = determinant3x3( M );	
+
 	if( volume < precision )
 	{
 		idPrevious = id;
 		id = idAdj.w;
 		return false;
 	}
-	
-	//id = id tetrahedron
+
 	return true;
 
 }
@@ -1490,9 +1477,11 @@ __device__ float3 Normal( Ray* ray, float4 point )
 	float4 gradv2;
 	float4 gradv3;
 	float3 normal;
-	int idPrevious;
+	int idPrevious = -1.0;
 	int id = ray->frontid;
-	while( !isPointInside( point , idPrevious, id ) );
+	int count = 0;
+
+	while( !isPointInside( point , idPrevious, id , count) );
 
 	gradv0 = tex1Dfetch( texGrad0, id );
 	gradv1 = tex1Dfetch( texGrad1, id );
@@ -1500,47 +1489,38 @@ __device__ float3 Normal( Ray* ray, float4 point )
 	gradv3 = tex1Dfetch( texGrad3, id );	
 
 	float3 barycentricCoef = barycentricInterpolation( point, id );
-	
+
 	normal.x = barycentricCoef.x*gradv0.x + barycentricCoef.y*gradv1.x + barycentricCoef.z*gradv2.x + (1.0 - ( barycentricCoef.x + barycentricCoef.y + barycentricCoef.z ))*gradv3.x;
-	normal.z = barycentricCoef.x*gradv0.z + barycentricCoef.y*gradv1.z + barycentricCoef.z*gradv2.z + (1.0 - ( barycentricCoef.x + barycentricCoef.y + barycentricCoef.z ))*gradv3.z;
 	normal.y = barycentricCoef.x*gradv0.y + barycentricCoef.y*gradv1.y + barycentricCoef.z*gradv2.y + (1.0 - ( barycentricCoef.x + barycentricCoef.y + barycentricCoef.z ))*gradv3.y;
+	normal.z = barycentricCoef.x*gradv0.z + barycentricCoef.y*gradv1.z + barycentricCoef.z*gradv2.z + (1.0 - ( barycentricCoef.x + barycentricCoef.y + barycentricCoef.z ))*gradv3.z;
+
+	//normal = normalize(normal);
+	//normal.z /= 8.0;
 
 	return normalize(normal);
 }
 
-__device__ float3 Light( float3 lightPos, float4 point ){
+__device__ float3 Light( float3 lightPos, float4 &point ){
 
 	return normalize(lightPos - make_float3(point));
 }
 
 
-__device__ float3 gradientIlumination( Ray* ray, float4 point , float DELTA, float3 lightPos){
+__device__ float3 gradientIlumination( Ray* ray, float4 &point , float DELTA, float3 lightPos){
 
 	float3 f;
 
 	f.x = ((dot( Normal( ray, point + make_float4(DELTA,0,0,0)), Light( lightPos, point + make_float4(DELTA,0,0,0))))
-		- (dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0))))
-		)/(2.0*DELTA);
+		- (dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0)))))
+		/(2.0*DELTA);
 
 	f.y = ((dot( Normal( ray, point + make_float4(0,DELTA,0,0)), Light( lightPos, point + make_float4(0,DELTA,0,0))))
-		- (dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0))))
-		)/(2.0*DELTA);
+		- (dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0)))))
+		/(2.0*DELTA);
 
 	f.z = ((dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
-		- (dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
-		)/(2.0*DELTA);
-
-	//f.x = abs((dot( Normal( ray, point + make_float4(DELTA,0,0,0)), Light( lightPos, point + make_float4(DELTA,0,0,0))))
-	//	- abs(dot( Normal( ray, point - make_float4(DELTA,0,0,0)), Light( lightPos, point - make_float4(DELTA,0,0,0))))
-	//	)/(2.0*DELTA);
-
-	//f.y = abs((dot( Normal( ray, point + make_float4(0,DELTA,0,0)), Light( lightPos, point + make_float4(0,DELTA,0,0))))
-	//	- abs(dot( Normal( ray, point - make_float4(0,DELTA,0,0)), Light( lightPos, point - make_float4(0,DELTA,0,0))))
-	//	)/(2.0*DELTA);
-
-	//f.z = abs((dot( Normal( ray, point + make_float4(0,0,DELTA,0)), Light( lightPos, point + make_float4(0,0,DELTA,0))))
-	//	- abs(dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0))))
-	//	)/(2.0*DELTA);
+		- (dot( Normal( ray, point - make_float4(0,0,DELTA,0)), Light( lightPos, point - make_float4(0,0,DELTA,0)))))
+		/(2.0*DELTA);
 
 	float3 normal = Normal( ray, point ); // Projection to come back to surface
 	f = f - dot( f, normal )*normal;
@@ -1685,12 +1665,19 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				// float4 gradient = (gradv0 + gradv1 + gradv2 + gradv3)/4.0;
 
 				//Initialize barycentric interpolation
-				float4 gradv0   = tex1Dfetch(texGrad0, threadRay->frontid);
-				float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
-				float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
-				float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
+				//float4 gradv0   = tex1Dfetch(texGrad0, threadRay->frontid);
+				//float4 gradv1   = tex1Dfetch(texGrad1, threadRay->frontid);
+				//float4 gradv2   = tex1Dfetch(texGrad2, threadRay->frontid);
+				//float4 gradv3   = tex1Dfetch(texGrad3, threadRay->frontid);
+				//
+				//gradv0.z /= 8.0;
+				//gradv1.z /= 8.0;
+				//gradv2.z /= 8.0;
+				//gradv3.z /= 8.0;
 
-				float4 point = threadRay->eyepos + t*threadRay->dir; 
+
+				// Isosurface point
+				float4 point = threadRay->eyepos + t*threadRay->dir; 		
 
 				// Ilumination calculus
 				float3 lightPos = make_float3( threadRay->eyepos );
@@ -1698,33 +1685,51 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				float3 wDirection = normalize( gradF );
 				float3 gradFNext= gradientIlumination( threadRay, (point + delta*make_float4(wDirection)), delta, lightPos );
 				float3 gradFPrevious = gradientIlumination( threadRay, (point - delta*make_float4(wDirection)),delta, lightPos );
-
-				//float secondDerivative = (length(gradFNext) - 2.0*length(gradF) + length(gradFPrevious))/delta*delta;
 #else
 				float3 N = normalize(make_float3(threadRay->currentelem.interpolfunc0));		
 #endif
 
 
 				float3 N = Normal( threadRay, point );
+				//N.z*=8.0;
+				//N = normalize(N);
 				float4 color = tex1D(texIsoColorScale, tetraBackScalar);
 				float3 L = normalize(make_float3(- threadRay->t * threadRay->dir));
 
 				//contours
-				/*if( abs(dot(N,L)) <= 0.15 )
-				{
-					color.x = 0.0;
-					color.y = 0.0;
-					color.z = 0.0;	
-				
-				}*/
+				//if( abs(dot(N,L)) <= 0.15 )
+				//{
+				//	color.x = 0.0;
+				//	color.y = 0.0;
+				//	color.z = 0.0;	
+				//
+				//}
 
-				//color.x *= abs(dot(N, L));
-				//color.y *= abs(dot(N, L));
-				//color.z *= abs(dot(N, L));
+				color.x *= abs(dot(N, L));
+				color.y *= abs(dot(N, L));
+				color.z *= abs(dot(N, L));
 
-				//color.x = DELTA/1000;
-				//color.y = DELTA/1000;
-				//color.z = DELTA/1000;
+
+				//if( abs(dot(N, L)) < 0.3 )
+				//{
+				//	color.x *= 0.5;
+				//	color.y *= 0.5;
+				//	color.z *= 0.5;
+				//}
+
+				//if( abs(dot(N, L)) < 0.6 && abs(dot(N, L)) > 0.3)
+				//{
+				//	color.x *= 0.8;
+				//	color.y *= 0.8;
+				//	color.z *= 0.8;
+				//}
+
+				//if( abs(dot(N, L)) > 0.6 )
+				//{
+				//	color.x *= 1;
+				//	color.y *= 1;
+				//	color.z *= 1;
+				//}
 
 				//color.x = length(gradF);
 				//color.y = length(gradF);
@@ -1734,7 +1739,7 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				//color.y = derivative;
 				//color.z = derivative;
 
-	/*			color.x = N.x;
+				/*			color.x = N.x;
 				color.y = N.y;
 				color.z = N.z;*/
 
@@ -1742,18 +1747,25 @@ __device__ void Traverse(int x, int y, int offset, Ray* threadRay, float3 probeb
 				color.y = normal.y;
 				color.z = normal.z;*/
 
-
-				if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && abs(( length( gradF ) 
-					- length( gradFNext )))>zero && abs(( length( gradF ) - length( gradFPrevious )))>zero )
+				if( deltaW > 0 )
 				{
-					color.x = 0.0;
-					color.y = 0.0;
-					color.z = 0.0;	
-					if( deltaW > 0 )
+					if(( length( gradF ) > length( gradFNext )) && ( length( gradF ) > length( gradFPrevious )) && abs(( length( gradF ) 
+						- length( gradFNext )))>zero && abs(( length( gradF ) - length( gradFPrevious )))>zero )
+					{
+						color.x = 0.0;
+						color.y = 0.0;
+						color.z = 0.0;						
 						color.w = 1.0;
-					else
-						color.w = 0.0;
+					}
 				}
+				//if(( length( gradF ) < length( gradFNext )) && ( length( gradF ) < length( gradFPrevious )) && abs(( length( gradF ) 
+				//	- length( gradFNext )))>zero && abs(( length( gradF ) - length( gradFPrevious )))>zero )
+				//{
+				//	color.x = 0.0;
+				//	color.y = 0.0;
+				//	color.z = 1.0;						
+				//	color.w = 1.0;
+				//}
 
 #ifdef CUDARC_WHITE
 				color.x = (1.0f - color.x) * (color.w);

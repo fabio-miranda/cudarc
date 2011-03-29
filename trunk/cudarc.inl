@@ -912,20 +912,14 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
   std::vector<float> gradientVolAcummulation;
   gradientVolAcummulation.resize(nVertex);
 
-  float maior = -FLT_MAX;
+  smallDelta = FLT_MAX;
 
   for( int i = 0 ; i < m_memoryInfo.numElem; i++ ){
-		//Quarto vertices do tetraedro
+		
 		int idV1 = (*tetraIndex)[4*i] - 1;
 		int idV2 = (*tetraIndex)[4*i+1] - 1;
 		int idV3 = (*tetraIndex)[4*i+2] - 1;
 		int idV4 = (*tetraIndex)[4*i+3] - 1;
-
-			//vertices do primeiro tetraedro
-		//VECTOR3D v1((*tet_vextex_positions)[3*idVertex1],(*tet_vextex_positions)[3*idVertex1+1],(*tet_vextex_positions)[3*idVertex1+2]);
-		//VECTOR3D v2((*tet_vextex_positions)[3*idVertex2],(*tet_vextex_positions)[3*idVertex2+1],(*tet_vextex_positions)[3*idVertex2+2]);
-		//VECTOR3D v3((*tet_vextex_positions)[3*idVertex3],(*tet_vextex_positions)[3*idVertex3+1],(*tet_vextex_positions)[3*idVertex3+2]);
-		//VECTOR3D v4((*tet_vextex_positions)[3*idVertex4],(*tet_vextex_positions)[3*idVertex4+1],(*tet_vextex_positions)[3*idVertex4+2]);
 
 		AlgVector v1((*vertexPositions)[3*idV1],(*vertexPositions)[3*idV1+1],(*vertexPositions)[3*idV1+2]);
 		AlgVector v2((*vertexPositions)[3*idV2],(*vertexPositions)[3*idV2+1],(*vertexPositions)[3*idV2+2]);
@@ -939,10 +933,17 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
 		float entries[9] = {u.x, u.y, u.z, v.x, v.y, v.z, w.x, w.y, w.z};
 
 		float volume = abs(fator*determinant( entries ));
-		//float volume = fator*abs(produtoMisto.determinant());
+		
+		//the radius of the insphere is given
+		AlgVector vw = (v.Cross(w));
+		AlgVector wu = (w.Cross(u));
+		AlgVector uv = (u.Cross(v));
+		AlgVector uvw = (vw + wu + uv);		
+		float radius = (6.0*volume)/( vw.Length() + wu.Length() + uv.Length() + uvw.Length());
 
-		if( maior < volume )
-			maior = volume;
+		if( smallDelta > radius && radius >= 1e-8)
+			smallDelta = radius;
+		//----
 
 		vertexGradientAux[4*idV1] += gradientData[0][4*(i+1)]*volume;
 		vertexGradientAux[4*idV1+1] += gradientData[0][4*(i+1)+1]*volume;
@@ -995,10 +996,19 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
 		}
   }
 
+  smallDelta/=0.1;
+
 #ifdef CUDARC_VERBOSE
   printf("Done.\n");
 #endif
 }
+
+MODEL_CLASS_TEMPLATE
+float CudaRC<MODELCLASS>::getDelta()
+{
+	return smallDelta;
+}
+
 
 MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** adjacenciesData){
