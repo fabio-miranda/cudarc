@@ -136,8 +136,10 @@ public:
   * Set if integration is normalized by the max edge length
   */
   void SetInterpolationType(int interpoltype);
+  void SetNumQuadraturePoints(int quadpoints);
   void SetNumSteps(int numsteps);
   void SetNumTraverses(int numtraverses);
+  void SetNumMaxCp(int nummaxcp);
   void SetNumPeeling(int numpeel);
 
   /**
@@ -145,11 +147,15 @@ public:
   */
   void SetMaxEdgeLengthEnabled(bool enabled); 
 
-  void SetDebugEnabled(bool flag);
+  void SetDebug0Enabled(bool flag);
+  void SetDebug1Enabled(bool flag);
+  void SetDebug2Enabled(bool flag);
+  void PrintDebug(int x, int y);
   void SetIsoSurfaceEnabled(bool flag);
   void SetVolumetricEnabled(bool flag);
   void SetProbeBoxEnabled(bool flag);
   void SetNormalizedField(bool flag);
+  void SetInvertNormals(bool flag);
   void SetProbeBox(float xmin, float xmax, float ymin, float ymax, float zmin, float zmax);
   void SetExplodedView(bool flag);
   void SetBlockSize(int sizex, int sizey);
@@ -173,7 +179,7 @@ public:
   /**
   * Render callback
   */
-  void Render(bool bdryonly, float* eyePos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug, float delta, float deltaW, float zero);
+  void Render(bool bdryonly, float* eyePos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug);
 
   /**
   * Returns the output of the CUDA computation
@@ -188,14 +194,15 @@ public:
   void PrintTime();
 
   /**
+  * Returns true if the GPU supports CUDA
+  * Requirements: NVidia GPU
+  */
+  bool IsSupported();
+
+  /**
   * Set explosion factor of the model, for exploded view
   */
   void SetExplosionFactor(float explosionfactor);
-
-    /**
-  * Set explosion factor of the model, for exploded view
-  */
-  float getDelta();
 
   Time m_time;
 
@@ -235,7 +242,8 @@ private:
   void BuildTetraScalarTexture(float** scalarData);
   void BuildZetaPsiGammaTexture(float* psiGammaData);
   void BuildColorScaleTexture(float* volcolorscalesata, float* isocolorscaledata);
-  void BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax);
+  void BuildHexaControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax);
+  void BuildTetraControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax);
   void BuildAmbOcclusionTexture(float** ambocclusdata);
 
   //Calculate determinant
@@ -272,7 +280,9 @@ private:
   int* m_diffnodesperelem;
   float m_explosionfactor;
   bool m_maxedgeenabled;
-  bool m_debug;
+  bool m_debug0;
+  bool m_debug1;
+  bool m_debug2;
   bool m_isosurface;
   bool m_volumetric;
   bool m_explodedview;
@@ -281,8 +291,10 @@ private:
   AlgVector m_probeboxmin;
   AlgVector m_probeboxmax;
   int m_interpoltype;
+  int m_numquadpoints;
   int m_numsteps;
   int m_numtraverses;
+  int m_nummaxcp;
   int m_numpeeling;
   int m_zetapsigammasize;
   int m_tfsize;
@@ -300,8 +312,6 @@ private:
   bool m_update_zetapsigamma;
   bool m_update_memoryinfo;
   bool m_update_maxnumpeel;
-
-  float smallDelta;
 
   MemoryInfo m_memoryInfo;
 };

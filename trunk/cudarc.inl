@@ -9,6 +9,7 @@
 
 #include "defines.h"
 #include "cudarc.h"
+#include "cudarc.cuh"
 #include "interpolfunc.h"
 #include "zetapsigamma.h"
 
@@ -40,23 +41,6 @@
 #include <stdlib.h>
 
 
-extern "C" void run(float* p_kernelTime, float* p_overheadTime, int depthPeelPass, float* p_eyePos, float* probeboxmin, float* probeboxmax, int handleTexIntersect, float delta, float deltaW, float zero);
-extern "C" void deleteGPUTextures();
-extern "C" void init(GLuint p_handleTexIntersect, GLuint p_handlePboOutput);
-extern "C" void update(int p_blocksizex, int p_blocksizey, int p_winsizex, int p_winsizey, bool p_debug, float p_maxedge, int p_interpoltype, int p_numsteps, int p_numtraverses, int p_numelem, bool p_isosurface, bool p_volumetric, bool p_probebox);
-extern "C" void createGPUAdjTex(int index, int size, float* data);
-extern "C" void createGPUCollisionTex(int fi, int size, float* data);
-extern "C" void createGPUInterpolFuncTex(int index, int size, float* data);
-extern "C" void createGPUColorScaleTex(int numValues, int size, float* volcolorscaledata, float* isocolorscale);
-extern "C" void createGPUIsoControlPointsTex(int numValues, int size, float* data);
-extern "C" void createGPUVolControlPointsTex(int numValues, int size, float* data);
-extern "C" void createGPUZetaPsiGammaTex(int numValues, int size, float* data);
-#ifdef CUDARC_GRADIENT_PERVERTEX
-extern "C" void createGPUGradientVertexTex(int fi, int size, float* data);
-#endif 
-extern "C" void printInfoGPUMemory();
-
-
 
 MODEL_CLASS_TEMPLATE
 CudaRC<MODELCLASS>::CudaRC(){
@@ -69,7 +53,9 @@ CudaRC<MODELCLASS>::CudaRC(){
   m_tfsize = 1024;
   m_tessellation = 1;
   m_maxedgeenabled = true;
-  m_debug = false;
+  m_debug0 = false;
+  m_debug1 = false;
+  m_debug2 = false;
   m_isosurface = false;
   m_volumetric = true;
   m_probeboxenabled = false;
@@ -140,7 +126,7 @@ void CudaRC<MODELCLASS>::Update(){
     m_memoryInfo.sizeCollisionTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
     m_memoryInfo.sizeInterpolFuncTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
     m_memoryInfo.sizeAdjTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
-	m_memoryInfo.sizeGradientVertexTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
+	  m_memoryInfo.sizeGradientVertexTex = (m_memoryInfo.numElem + 1) * 4 * sizeof(float);
 
   }
 
@@ -156,7 +142,7 @@ void CudaRC<MODELCLASS>::Update(){
   if(m_update_cuda){
     float maxedge = m_maxedgeenabled ? m_tetraGeometry->GetMaxEdgeLength() : 1.0f;
     int numelem = m_memoryInfo.numElem;
-    update(m_blocksize.x, m_blocksize.y, m_winsize.x, m_winsize.y, m_debug, maxedge, m_interpoltype, m_numsteps, m_numtraverses, numelem, m_isosurface, m_volumetric, m_probeboxenabled);
+    update(m_blocksize.x, m_blocksize.y, m_winsize.x, m_winsize.y, m_debug0, m_debug1, m_debug2, maxedge, m_interpoltype, m_numquadpoints, m_numsteps, m_nummaxcp, m_numtraverses, numelem, m_isosurface, m_volumetric, m_probeboxenabled);
   }
 
   if(m_update_maxnumpeel){
@@ -265,20 +251,26 @@ void CudaRC<MODELCLASS>::Update(){
     float* volcontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
     float* isocontronpointsdata = new float[4 * m_memoryInfo.numValuesTf];
 
-    int volnumcp = m_volcolorscale->GetNumberOfValues();
-    int isonumcp = m_isocolorscale->GetNumberOfValues();
+    int volnumcp = m_volcolorscale->GetNumberOfColors();
+    int isonumcp = m_isocolorscale->GetNumberOfColors();
     float* volcp = new float[volnumcp];
-    float* isocp = new float[isonumcp];
+    //float* isocp = new float[isonumcp];
 
     for(int i=0; i<volnumcp; i++)
       volcp[i] = m_volcolorscale->GetValue(i);
 
+    /*
     for(int i=0; i<isonumcp; i++)
-      isocp[i] = m_isocolorscale->GetValue(i);
+      isocp[i] = m_isocolorscale->GetValue(i+1);
+    */
 
     BuildColorScaleTexture(volcolorscalesata, isocolorscaledata);
-    BuildControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
-    BuildControlPointsTexture(isocontronpointsdata, isonumcp-1, m_isovalues, m_isocolorscale->GetValue(0), m_isocolorscale->GetValue(isonumcp-1));
+#ifdef CUDARC_HEX
+    BuildHexaControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
+#else
+    BuildTetraControlPointsTexture(volcontronpointsdata, volnumcp, volcp, m_volcolorscale->GetValue(0), m_volcolorscale->GetValue(volnumcp-1));
+    BuildTetraControlPointsTexture(isocontronpointsdata, isonumcp, m_isovalues, 0, 1);
+#endif
     createGPUColorScaleTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcolorscalesata, isocolorscaledata);
     createGPUVolControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, volcontronpointsdata);
     createGPUIsoControlPointsTex(m_memoryInfo.numValuesTf, m_memoryInfo.sizeTf, isocontronpointsdata);
@@ -287,7 +279,7 @@ void CudaRC<MODELCLASS>::Update(){
     delete [] volcontronpointsdata;
     delete [] isocontronpointsdata;
     delete [] volcp;
-    delete [] isocp;
+    //delete [] isocp;
   }
 
   if(m_update_zetapsigamma){
@@ -432,8 +424,13 @@ void CudaRC<MODELCLASS>::ComputeHexaBdryFaces(){
       static int aux[6] = {1,0,3,4,2,5}; //fem
       //static int aux[6] = {0,1,2,3,4,5}; //res
       int faceid = faces[i].GetLocalId();
+#ifdef CUDARC_WITH_FACEID
       int id_x = (6 * m_elemId[id] + aux[faceid]) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
       int id_y = (6 * m_elemId[id] + aux[faceid]) % CUDARC_MAX_MESH_TEXTURE_WIDTH;
+#else
+      int id_x = (m_elemId[id]) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
+      int id_y = (m_elemId[id]) % CUDARC_MAX_MESH_TEXTURE_WIDTH;
+#endif
 
       //Save both the element id and the front face id
       glMultiTexCoord2f(GL_TEXTURE0, id_x, id_y);
@@ -561,10 +558,13 @@ void CudaRC<MODELCLASS>::ComputeTetraBdryFaces(){
       if(set->GetAdj(id-1, j) == 0)  {
 
         //Save both the element id and the face id of the --current-- cell (not the adj)
-        float id_x = (4 * id + j) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
-        float id_y = (4 * id + j) % CUDARC_MAX_MESH_TEXTURE_WIDTH;
-        //int id_x = (id) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
-        //int id_y = (id) % CUDARC_MAX_MESH_TEXTURE_HEIGHT;
+#ifdef CUDARC_WITH_FACEID
+        int id_x = (4 * id + j) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
+        int id_y = (4 * id + j) % CUDARC_MAX_MESH_TEXTURE_WIDTH;
+#else
+        int id_x = (id) / CUDARC_MAX_MESH_TEXTURE_WIDTH;
+        int id_y = (id) % CUDARC_MAX_MESH_TEXTURE_WIDTH;
+#endif
 
         
         glMultiTexCoord2f(GL_TEXTURE0, id_x, id_y);
@@ -780,7 +780,11 @@ void CudaRC<MODELCLASS>::BuildHexaMeshTextures(float** collisionData, float** ad
 
           //Save both the element id and the face id of the --adjacent-- cell
           static int aux[6] = {1,0,3,2,5,4};
+#ifdef CUDARC_WITH_FACEID
           adjacenciesData[textouse[fi]][4 * (ti+1) + fi - 3 * textouse[fi]] = 6 * adjid + aux[fi];
+#else
+          adjacenciesData[textouse[fi]][4 * (ti+1) + fi - 3 * textouse[fi]] = adjid;
+#endif
 
 #ifndef CUDARC_BILINEAR
           //Check if adj has normal.
@@ -912,14 +916,18 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
   std::vector<float> gradientVolAcummulation;
   gradientVolAcummulation.resize(nVertex);
 
-  smallDelta = FLT_MAX;
-
   for( int i = 0 ; i < m_memoryInfo.numElem; i++ ){
-		
+		//Quarto vertices do tetraedro
 		int idV1 = (*tetraIndex)[4*i] - 1;
 		int idV2 = (*tetraIndex)[4*i+1] - 1;
 		int idV3 = (*tetraIndex)[4*i+2] - 1;
 		int idV4 = (*tetraIndex)[4*i+3] - 1;
+
+			//vertices do primeiro tetraedro
+		//VECTOR3D v1((*tet_vextex_positions)[3*idVertex1],(*tet_vextex_positions)[3*idVertex1+1],(*tet_vextex_positions)[3*idVertex1+2]);
+		//VECTOR3D v2((*tet_vextex_positions)[3*idVertex2],(*tet_vextex_positions)[3*idVertex2+1],(*tet_vextex_positions)[3*idVertex2+2]);
+		//VECTOR3D v3((*tet_vextex_positions)[3*idVertex3],(*tet_vextex_positions)[3*idVertex3+1],(*tet_vextex_positions)[3*idVertex3+2]);
+		//VECTOR3D v4((*tet_vextex_positions)[3*idVertex4],(*tet_vextex_positions)[3*idVertex4+1],(*tet_vextex_positions)[3*idVertex4+2]);
 
 		AlgVector v1((*vertexPositions)[3*idV1],(*vertexPositions)[3*idV1+1],(*vertexPositions)[3*idV1+2]);
 		AlgVector v2((*vertexPositions)[3*idV2],(*vertexPositions)[3*idV2+1],(*vertexPositions)[3*idV2+2]);
@@ -933,17 +941,9 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
 		float entries[9] = {u.x, u.y, u.z, v.x, v.y, v.z, w.x, w.y, w.z};
 
 		float volume = abs(fator*determinant( entries ));
-		
-		//the radius of the insphere is given
-		AlgVector vw = (v.Cross(w));
-		AlgVector wu = (w.Cross(u));
-		AlgVector uv = (u.Cross(v));
-		AlgVector uvw = (vw + wu + uv);		
-		float radius = (6.0*volume)/( vw.Length() + wu.Length() + uv.Length() + uvw.Length());
+		//float volume = fator*abs(produtoMisto.determinant());
 
-		if( smallDelta > radius && radius >= 1e-8)
-			smallDelta = radius;
-		//----
+
 
 		vertexGradientAux[4*idV1] += gradientData[0][4*(i+1)]*volume;
 		vertexGradientAux[4*idV1+1] += gradientData[0][4*(i+1)+1]*volume;
@@ -996,19 +996,22 @@ void CudaRC<MODELCLASS>::BuildTetraVertexGradientTextures(float** gradientVertex
 		}
   }
 
-  smallDelta/=0.1;
+
+
+  /*for(int ti=0; ti<m_memoryInfo.numElem; ti++){
+    for(int ni=0; ni<4; ni++){
+      float* pos = set->GetPosition(ti, ni);
+      collisionData[ni][4 * (ti+1) + 0] = pos[0];
+      collisionData[ni][4 * (ti+1) + 1] = pos[1];
+      collisionData[ni][4 * (ti+1) + 2] = pos[2];
+      collisionData[ni][4 * (ti+1) + 3] = 1;
+    }
+  }*/
 
 #ifdef CUDARC_VERBOSE
   printf("Done.\n");
 #endif
 }
-
-MODEL_CLASS_TEMPLATE
-float CudaRC<MODELCLASS>::getDelta()
-{
-	return smallDelta;
-}
-
 
 MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** adjacenciesData){
@@ -1052,7 +1055,7 @@ void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** a
   for(int fi=0; fi<numFaces; fi++){
     for(int ti=0; ti<m_memoryInfo.numElem; ti++){
       int posindices[3] = {-1, -1, -1};
-       int adjid = set->GetAdj(ti, fi); // 1-indexed
+      int adjid = set->GetAdj(ti, fi); // 1-indexed
       float* adjpos[4];
       float* tpos[4];
       int adjfaceid = 0;
@@ -1075,8 +1078,11 @@ void CudaRC<MODELCLASS>::BuildTetraMeshTextures(float** collisionData, float** a
 
       //Save both the element id and the face id of the --adjacent-- cell
       static int aux[4] = {0, 1, 2, 3};
+#ifdef CUDARC_WITH_FACEID
       adjacenciesData[0][numFaces * (ti+1) + fi] = 4 * adjid + aux[adjfaceid]; //<<---- aqui
-      //adjacenciesData[0][numFaces * (ti+1) + fi] = id;
+#else
+      adjacenciesData[0][numFaces * (ti+1) + fi] = adjid;
+#endif
       
     }
   }
@@ -1162,7 +1168,8 @@ void CudaRC<MODELCLASS>::BuildTetraInterpolFuncTexture(float** gradientData){
     float* scalars = &(arrayScalars->GetArray()[4 * ti]);
 
     
-    ComputeGradientLeastSquares(4, position, scalars, gradient);
+    //ComputeGradientLeastSquares(4, position, scalars, gradient);
+    ComputeGradient(position, scalars, gradient);
     
     
     //float gradient2[3];
@@ -1185,8 +1192,8 @@ void CudaRC<MODELCLASS>::BuildTetraInterpolFuncTexture(float** gradientData){
     gradientData[0][4 * (ti+1) + 1] = gradient[1];
     gradientData[0][4 * (ti+1) + 2] = gradient[2];
     //scalar term, for linear tetrahedral meshes
-    //gradientData[0][4 * (ti+1) + 3] = scalars[0] - (gradient[0]*position[0] + gradient[1]*position[1] + gradient[2]*position[2]);
-    gradientData[0][4 * (ti+1) + 3] = gradient[3];
+    gradientData[0][4 * (ti+1) + 3] = scalars[0] - (gradient[0]*position[0] + gradient[1]*position[1] + gradient[2]*position[2]);
+    //gradientData[0][4 * (ti+1) + 3] = gradient[3];
     /*
     gradientData[0][4 * (ti+1)] = scalars[0];
     gradientData[0][4 * (ti+1) + 1] = scalars[1];
@@ -1245,6 +1252,43 @@ void CudaRC<MODELCLASS>::BuildColorScaleTexture(float* volcolorscaledata, float*
 #endif
 }
 
+/*
+1D texture containing the isosurface scalars
+Size: (transfer function size)* float4
+*/
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::BuildHexaControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax){
+#ifdef CUDARC_VERBOSE
+  printf("\nBuilding Control Points Texture... ");
+#endif
+
+  for(int i=0; i<4 * m_memoryInfo.numValuesTf; i++)
+    cpdata[i] = 3.0f;
+
+  int cpcount = 0;
+  for(int i=0; i<numcp; i++){
+    if(cpvalues[i] > 0 && cpvalues[i] < 1.0f){
+      cpdata[4*(cpcount)] = cpvalues[i];
+      cpcount++;
+    }
+  }
+  
+
+  /*
+  cpdata[0] = 0.4;
+  cpdata[4] = 0.4;
+  cpdata[8] = 0;
+  cpdata[12] = 0;
+  cpdata[16] = 0;
+  //cpdata[8] = 0.6f;
+  //cpdata[12] = 0.7f;
+  */
+
+
+#ifdef CUDARC_VERBOSE
+  printf("Done.\n");
+#endif
+}
 
 /*
 1D texture contained the isosurfaces
@@ -1258,13 +1302,16 @@ For position n:
 - n.w: previous control point (j-1)
 */
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax){
+void CudaRC<MODELCLASS>::BuildTetraControlPointsTexture(float* cpdata, float numcp, float* cpvalues, float smin, float smax){
 #ifdef CUDARC_VERBOSE
   printf("\nBuilding Control Points Texture... ");
 #endif
-
+  
   float sdiff = smax - smin;
-
+  
+  for(int i=0; i<4 * m_memoryInfo.numValuesTf; i++)
+    cpdata[i] = 3.0f;
+  
   //First control point (cp) bigger than s
   int cpCounter = 0;
   for(int i=0; i< m_memoryInfo.numValuesTf; ){
@@ -1288,12 +1335,12 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
       }
       i++;
     }
-
   }
 
   //First control point (cp) smaller than s
+  cpCounter = numcp - 1;
   for(int i=m_memoryInfo.numValuesTf - 1; i>= 0 ; ){
-    float s = (float) (i+1.0f) / (float) (m_memoryInfo.numValuesTf-1.0f);
+    float s = (float) (i+1) / (float) (m_memoryInfo.numValuesTf-1);
     float s_cp = (cpvalues[cpCounter] - smin) / (sdiff);
 
     if(cpCounter > 0){
@@ -1320,7 +1367,7 @@ void CudaRC<MODELCLASS>::BuildControlPointsTexture(float* cpdata, float numcp, f
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug, float delta, float deltaW, float zero){
+void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, float* eyeUp, float eyeZNear, float eyeFov, bool debug){
 
   
   Update();
@@ -1396,9 +1443,9 @@ void CudaRC<MODELCLASS>::Render(bool bdryonly, float* eyepos, float* eyeDir, flo
     //CUDA
     if(bdryonly == false){
       if(m_numpeeling == 0)
-        run(&kernelCallTime, &overheadTime, i, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId(), delta, deltaW, zero);
+        run(&kernelCallTime, &overheadTime, i, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
       else if(m_numpeeling == i)
-        run(&kernelCallTime, &overheadTime, 0, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId(), delta, deltaW, zero);
+        run(&kernelCallTime, &overheadTime, 0, eyepos, (float*)m_probeboxmin, (float*)m_probeboxmax, m_uglTexIntersect[currentIndex].GetTextureId());
     }
 
     //Swap
@@ -1575,6 +1622,14 @@ void CudaRC<MODELCLASS>::SetInterpolationType(int interpoltype){
 }
 
 MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetNumQuadraturePoints(int quadpoints){
+  m_numquadpoints = quadpoints;
+  m_update_cuda = true;
+}
+
+ 
+
+MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::SetNumSteps(int numsteps){
   m_numsteps = numsteps;
   m_update_cuda = true;
@@ -1583,6 +1638,12 @@ void CudaRC<MODELCLASS>::SetNumSteps(int numsteps){
 MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::SetNumTraverses(int numtraverses){
   m_numtraverses = numtraverses;
+  m_update_cuda = true;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetNumMaxCp(int nummaxcp){
+  m_nummaxcp = nummaxcp;
   m_update_cuda = true;
 }
 
@@ -1599,8 +1660,20 @@ void CudaRC<MODELCLASS>::SetMaxEdgeLengthEnabled(bool flag){
 }
 
 MODEL_CLASS_TEMPLATE
-void CudaRC<MODELCLASS>::SetDebugEnabled(bool flag){
-  m_debug = flag;
+void CudaRC<MODELCLASS>::SetDebug0Enabled(bool flag){
+  m_debug0 = flag;
+  m_update_cuda = true;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetDebug1Enabled(bool flag){
+  m_debug1 = flag;
+  m_update_cuda = true;
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::SetDebug2Enabled(bool flag){
+  m_debug2 = flag;
   m_update_cuda = true;
 }
 
@@ -1679,5 +1752,19 @@ MODEL_CLASS_TEMPLATE
 void CudaRC<MODELCLASS>::SetExplosionFactor(float explosionfactor){
 
   m_explosionfactor = explosionfactor;
+
+}
+
+MODEL_CLASS_TEMPLATE
+bool CudaRC<MODELCLASS>::IsSupported(){
+
+  return isSupported();
+
+}
+
+MODEL_CLASS_TEMPLATE
+void CudaRC<MODELCLASS>::PrintDebug(int x, int y){
+
+  printDebugTexture(x, y);
 
 }

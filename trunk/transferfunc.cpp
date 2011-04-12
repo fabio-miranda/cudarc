@@ -102,10 +102,10 @@ TpvColorScale* IsoValues(const char* isofilepath, float scalarmin, float scalarm
     float color[4];
 
     fscanf(fp, "%f %f %f %f %f", &scalar, &color[0], &color[1], &color[2], &color[3]);
-    //for(int j=-2; j<2; j++){
-      colorscale->SetColor(i , color[0], color[1], color[2], color[3]);
-    //}
-      (*isovalues)[i] = scalar;
+    //for(int j=-3; j<3; j++)
+      colorscale->SetColor(i, color[0], color[1], color[2], color[3]);
+    
+    (*isovalues)[i] = scalar;
   }
 
   fclose(fp);

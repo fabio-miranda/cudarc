@@ -109,17 +109,21 @@ struct ConstMemory{
   float numTets;
   float2 screenSize;
   float interpoltype;
+  float numquadpoints;
   float maxedge;
-  float debug;
+  float debug0;
+  float debug1;
+  float debug2;
   float numsteps;
   float numtraverses;
+  float nummaxcp;
   float isosurface;
   float volumetric;
   float probebox;
 };
 
 
-__constant__ ConstMemory constMemory;
+__device__ __constant__ ConstMemory constmemory;
 
 //Host memory
 static int sizex, sizey;
@@ -127,5 +131,20 @@ dim3 grids;
 dim3 threads;
 
 //Debug
-static float4 *dev_debug;
-static float4 debug [512*512];
+static float4 *dev_debugdata0;
+static float4 *dev_debugdata1;
+static float4 *dev_debugdata2;
+static float4 *dev_debugdata3;
+static float4 *dev_debugdata4;
+static float4 *dev_debugdata5;
+static float4 *dev_debugdata6;
+static float4 *dev_debugdata7;
+static float4 *dev_debugdata8;
+static float4 *dev_debugdata9;
+static float4 debugdata0 [512*512];
+static float4 debugdata1 [512*512];
+static float4 debugdata2 [512*512];
+static float4 debugdata3 [512*512];
+static float4 debugdata4 [512*512];
+static float4 debugdata5 [512*512];
+static float4 debugdata6 [512*512];
